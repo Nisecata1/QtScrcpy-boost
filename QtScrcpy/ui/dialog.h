@@ -39,6 +39,7 @@ private slots:
     void on_updateDevice_clicked();
     void on_startServerBtn_clicked();
     void on_stopServerBtn_clicked();
+    void onRestartDeviceRequested(const QString &serial);
     void on_wirelessConnectBtn_clicked();
     void on_startAdbdBtn_clicked();
     void on_getIPBtn_clicked();
@@ -53,6 +54,7 @@ private slots:
     void on_refreshGameScriptBtn_clicked();
     void on_applyScriptBtn_clicked();
     void on_recordScreenCheck_clicked(bool checked);
+    void on_centerCropCheck_toggled(bool checked);
     void on_usbConnectBtn_clicked();
     void on_wifiConnectBtn_clicked();
     void on_connectedPhoneList_itemDoubleClicked(QListWidgetItem *item);
@@ -80,6 +82,7 @@ private:
     void slotActivated(QSystemTrayIcon::ActivationReason reason);
     int findDeviceFromeSerialBox(bool wifi);
     quint32 getBitRate();
+    qsc::DeviceParams buildDeviceParams(const QString &serial);
     const QString &getServerPath();
     void loadIpHistory();
     void saveIpHistory(const QString &ip);

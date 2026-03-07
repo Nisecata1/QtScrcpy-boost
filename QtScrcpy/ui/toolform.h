@@ -24,6 +24,9 @@ public:
     void setSerial(const QString& serial);
     bool isHost();
 
+signals:
+    void restartServiceRequested();
+
 protected:
     void mousePressEvent(QMouseEvent *event);
     void mouseReleaseEvent(QMouseEvent *event);
@@ -48,6 +51,7 @@ private slots:
     void on_groupControlBtn_clicked();
     void on_openScreenBtn_clicked();
     void on_clipboardBtn_clicked();
+    void on_restartServiceBtn_clicked();
 
 private:
     void initStyle();

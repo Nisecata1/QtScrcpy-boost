@@ -38,6 +38,7 @@ bool ToolForm::isHost()
 void ToolForm::initStyle()
 {
     IconHelper::Instance()->SetIcon(ui->fullScreenBtn, QChar(0xf0b2), 15);
+    IconHelper::Instance()->SetIcon(ui->restartServiceBtn, QChar(0xf021), 15);
     IconHelper::Instance()->SetIcon(ui->menuBtn, QChar(0xf096), 15);
     IconHelper::Instance()->SetIcon(ui->homeBtn, QChar(0xf1db), 15);
     //IconHelper::Instance()->SetIcon(ui->returnBtn, QChar(0xf104), 15);
@@ -240,4 +241,9 @@ void ToolForm::on_clipboardBtn_clicked()
         return;
     }
     device->requestDeviceClipboard();
+}
+
+void ToolForm::on_restartServiceBtn_clicked()
+{
+    emit restartServiceRequested();
 }

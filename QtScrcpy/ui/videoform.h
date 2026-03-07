@@ -41,6 +41,9 @@ public:
     void switchFullScreen();
     bool isHost();
 
+signals:
+    void restartServiceRequested(const QString &serial);
+
 private:
     void onFrame(int width, int height, uint8_t* dataY, uint8_t* dataU, uint8_t* dataV,
                  int linesizeY, int linesizeU, int linesizeV) override;

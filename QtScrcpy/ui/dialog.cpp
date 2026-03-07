@@ -247,6 +247,8 @@ void Dialog::updateBootConfig(bool toView)
         ui->formatBox->setCurrentIndex(config.recordFormatIndex);
         ui->recordPathEdt->setText(config.recordPath);
         ui->lockOrientationBox->setCurrentIndex(config.lockOrientationIndex);
+        ui->centerCropSizeSpin->setValue(config.videoCenterCropSize > 0 ? qBound(2, config.videoCenterCropSize, 4096) : 256);
+        ui->centerCropCheck->setChecked(config.videoCenterCropSize > 0);
         ui->framelessCheck->setChecked(config.framelessWindow);
         ui->recordScreenCheck->setChecked(config.recordScreen);
         ui->notDisplayCheck->setChecked(config.recordBackground);
@@ -266,6 +268,7 @@ void Dialog::updateBootConfig(bool toView)
         config.recordFormatIndex = ui->formatBox->currentIndex();
         config.recordPath = ui->recordPathEdt->text();
         config.lockOrientationIndex = ui->lockOrientationBox->currentIndex();
+        config.videoCenterCropSize = ui->centerCropCheck->isChecked() ? ui->centerCropSizeSpin->value() : 0;
         config.recordScreen = ui->recordScreenCheck->isChecked();
         config.recordBackground = ui->notDisplayCheck->isChecked();
         config.reverseConnect = ui->useReverseCheck->isChecked();
@@ -365,38 +368,9 @@ void Dialog::on_updateDevice_clicked()
 
 void Dialog::on_startServerBtn_clicked()
 {
+    updateBootConfig(false);
     outLog("start server...", false);
-
-    // this is ok that "original" toUshort is 0
-    quint16 videoSize = ui->maxSizeBox->currentText().trimmed().toUShort();
-    qsc::DeviceParams params;
-    params.serial = ui->serialBox->currentText().trimmed();
-    params.maxSize = videoSize;
-    params.bitRate = getBitRate();
-    // on devices with Android >= 10, the capture frame rate can be limited
-    params.maxFps = static_cast<quint32>(Config::getInstance().getMaxFps());
-    params.closeScreen = ui->closeScreenCheck->isChecked();
-    params.useReverse = ui->useReverseCheck->isChecked();
-    params.display = !ui->notDisplayCheck->isChecked();
-    params.renderExpiredFrames = Config::getInstance().getRenderExpiredFrames();
-    if (ui->lockOrientationBox->currentIndex() > 0) {
-        params.captureOrientationLock = 1;
-        params.captureOrientation = (ui->lockOrientationBox->currentIndex() - 1) * 90;
-    }
-    params.stayAwake = ui->stayAwakeCheck->isChecked();
-    params.recordFile = ui->recordScreenCheck->isChecked();
-    params.recordPath = ui->recordPathEdt->text().trimmed();
-    params.recordFileFormat = ui->formatBox->currentText().trimmed();
-    params.serverLocalPath = getServerPath();
-    params.serverRemotePath = Config::getInstance().getServerPath();
-    params.pushFilePath = Config::getInstance().getPushFilePath();
-    params.gameScript = getGameScript(ui->gameBox->currentText());
-    params.logLevel = Config::getInstance().getLogLevel();
-    params.codecOptions = Config::getInstance().getCodecOptions();
-    params.codecName = Config::getInstance().getCodecName();
-    params.scid = QRandomGenerator::global()->bounded(1, 10000) & 0x7FFFFFFF;
-
-    qsc::IDeviceManage::getInstance().connectDevice(params);
+    qsc::IDeviceManage::getInstance().connectDevice(buildDeviceParams(ui->serialBox->currentText().trimmed()));
 }
 
 void Dialog::on_stopServerBtn_clicked()
@@ -540,6 +514,7 @@ void Dialog::onDeviceConnected(bool success, const QString &serial, const QStrin
     auto videoForm = new VideoForm(ui->framelessCheck->isChecked(), Config::getInstance().getSkin(), ui->showToolbar->isChecked());
     videoForm->setSerial(serial);
     videoForm->setInitialOrientationHint(initialOrientation);
+    connect(videoForm, &VideoForm::restartServiceRequested, this, &Dialog::onRestartDeviceRequested);
 
     qsc::IDeviceManage::getInstance().getDevice(serial)->setUserData(static_cast<void*>(videoForm));
     qsc::IDeviceManage::getInstance().getDevice(serial)->registerDeviceObserver(videoForm);
@@ -578,6 +553,34 @@ void Dialog::onDeviceConnected(bool success, const QString &serial, const QStrin
 #endif
 
     GroupController::instance().addDevice(serial);
+}
+
+void Dialog::onRestartDeviceRequested(const QString &serial)
+{
+    const QString trimmedSerial = serial.trimmed();
+    if (trimmedSerial.isEmpty()) {
+        outLog("restart server failed: serial is empty");
+        return;
+    }
+
+    updateBootConfig(false);
+    outLog(QString("restart server: %1").arg(trimmedSerial), false);
+
+    if (!qsc::IDeviceManage::getInstance().disconnectDevice(trimmedSerial)) {
+        outLog(QString("restart server failed: device not found (%1)").arg(trimmedSerial));
+        return;
+    }
+
+    QTimer::singleShot(0, this, [this, trimmedSerial]() {
+        const qsc::DeviceParams params = buildDeviceParams(trimmedSerial);
+        if (params.serial.trimmed().isEmpty()) {
+            outLog("restart server failed: serial is empty");
+            return;
+        }
+        if (!qsc::IDeviceManage::getInstance().connectDevice(params)) {
+            outLog(QString("restart server failed: connect device failed (%1)").arg(trimmedSerial));
+        }
+    });
 }
 
 void Dialog::onDeviceDisconnected(QString serial)
@@ -694,6 +697,11 @@ void Dialog::on_recordScreenCheck_clicked(bool checked)
         qWarning() << "please select record save path!!!";
         ui->recordScreenCheck->setChecked(false);
     }
+}
+
+void Dialog::on_centerCropCheck_toggled(bool checked)
+{
+    ui->centerCropSizeSpin->setEnabled(checked);
 }
 
 void Dialog::on_usbConnectBtn_clicked()
@@ -817,6 +825,38 @@ quint32 Dialog::getBitRate()
 {
     return ui->bitRateEdit->text().trimmed().toUInt() *
             (ui->bitRateBox->currentText() == QString("Mbps") ? 1000000 : 1000);
+}
+
+qsc::DeviceParams Dialog::buildDeviceParams(const QString &serial)
+{
+    // this is ok that "original" toUshort is 0
+    quint16 videoSize = ui->maxSizeBox->currentText().trimmed().toUShort();
+    qsc::DeviceParams params;
+    params.serial = serial.trimmed();
+    params.maxSize = videoSize;
+    params.bitRate = getBitRate();
+    params.maxFps = static_cast<quint32>(Config::getInstance().getMaxFps());
+    params.closeScreen = ui->closeScreenCheck->isChecked();
+    params.useReverse = ui->useReverseCheck->isChecked();
+    params.display = !ui->notDisplayCheck->isChecked();
+    params.renderExpiredFrames = Config::getInstance().getRenderExpiredFrames();
+    if (ui->lockOrientationBox->currentIndex() > 0) {
+        params.captureOrientationLock = 1;
+        params.captureOrientation = (ui->lockOrientationBox->currentIndex() - 1) * 90;
+    }
+    params.stayAwake = ui->stayAwakeCheck->isChecked();
+    params.recordFile = ui->recordScreenCheck->isChecked();
+    params.recordPath = ui->recordPathEdt->text().trimmed();
+    params.recordFileFormat = ui->formatBox->currentText().trimmed();
+    params.serverLocalPath = getServerPath();
+    params.serverRemotePath = Config::getInstance().getServerPath();
+    params.pushFilePath = Config::getInstance().getPushFilePath();
+    params.gameScript = getGameScript(ui->gameBox->currentText());
+    params.logLevel = Config::getInstance().getLogLevel();
+    params.codecOptions = Config::getInstance().getCodecOptions();
+    params.codecName = Config::getInstance().getCodecName();
+    params.scid = QRandomGenerator::global()->bounded(1, 10000) & 0x7FFFFFFF;
+    return params;
 }
 
 const QString &Dialog::getServerPath()
