@@ -2,9 +2,15 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QKeyEvent>
+#include <QApplication>
+#include <QLocale>
+#include <QProcess>
 #include <QRandomGenerator>
 #include <QTime>
 #include <QTimer>
+#include <QCoreApplication>
+#include <QDesktopServices>
+#include <QUrl>
 
 #include "config.h"
 #include "dialog.h"
@@ -110,13 +116,42 @@ Dialog::Dialog(QWidget *parent) : QWidget(parent), ui(new Ui::Widget)
     m_menu = new QMenu(this);
     m_quit = new QAction(this);
     m_showWindow = new QAction(this);
+    m_restart = new QAction(this);
     m_showWindow->setText(tr("show"));
+    QString restartText = tr("restart");
+    if (restartText == QLatin1String("restart")) {
+        const QString configuredLanguage = Config::getInstance().getLanguage();
+        if (configuredLanguage == QLatin1String("zh_CN")) {
+            restartText = QStringLiteral("重启");
+        } else if (configuredLanguage == QLatin1String("ja_JP")) {
+            restartText = QStringLiteral("再起動");
+        } else if (configuredLanguage == QLatin1String("ko_KR")) {
+            restartText = QStringLiteral("다시 시작");
+        } else if (configuredLanguage == QLatin1String("Auto")) {
+            switch (QLocale().language()) {
+            case QLocale::Chinese:
+                restartText = QStringLiteral("重启");
+                break;
+            case QLocale::Japanese:
+                restartText = QStringLiteral("再起動");
+                break;
+            case QLocale::Korean:
+                restartText = QStringLiteral("다시 시작");
+                break;
+            default:
+                break;
+            }
+        }
+    }
+    m_restart->setText(restartText);
     m_quit->setText(tr("quit"));
     m_menu->addAction(m_showWindow);
+    m_menu->addAction(m_restart);
     m_menu->addAction(m_quit);
     m_hideIcon->setContextMenu(m_menu);
     m_hideIcon->show();
     connect(m_showWindow, &QAction::triggered, this, &Dialog::show);
+    connect(m_restart, &QAction::triggered, this, &Dialog::restartApplication);
     connect(m_quit, &QAction::triggered, this, [this]() {
         m_hideIcon->hide();
         qApp->quit();
@@ -496,7 +531,7 @@ void Dialog::getIPbyIp()
     m_adb.execute(ui->serialBox->currentText().trimmed(), adbArgs);
 }
 
-void Dialog::onDeviceConnected(bool success, const QString &serial, const QString &deviceName, const QSize &size)
+void Dialog::onDeviceConnected(bool success, const QString &serial, const QString &deviceName, const QSize &size, int initialOrientation)
 {
     Q_UNUSED(deviceName);
     if (!success) {
@@ -504,6 +539,7 @@ void Dialog::onDeviceConnected(bool success, const QString &serial, const QStrin
     }
     auto videoForm = new VideoForm(ui->framelessCheck->isChecked(), Config::getInstance().getSkin(), ui->showToolbar->isChecked());
     videoForm->setSerial(serial);
+    videoForm->setInitialOrientationHint(initialOrientation);
 
     qsc::IDeviceManage::getInstance().getDevice(serial)->setUserData(static_cast<void*>(videoForm));
     qsc::IDeviceManage::getInstance().getDevice(serial)->registerDeviceObserver(videoForm);
@@ -578,6 +614,18 @@ void Dialog::on_selectRecordPathBtn_clicked()
     QFileDialog::Options options = QFileDialog::DontResolveSymlinks | QFileDialog::ShowDirsOnly;
     QString directory = QFileDialog::getExistingDirectory(this, tr("select path"), "", options);
     ui->recordPathEdt->setText(directory);
+}
+
+void Dialog::on_openAppFolderBtn_clicked()
+{
+    const QString appDir = QCoreApplication::applicationDirPath();
+    if (QDesktopServices::openUrl(QUrl::fromLocalFile(appDir))) {
+        outLog(QString("open app folder: %1").arg(appDir));
+        return;
+    }
+
+    outLog(QString("could not open app folder: %1").arg(appDir));
+    QMessageBox::warning(this, tr("open app folder"), tr("Could not open application folder:\n%1").arg(appDir));
 }
 
 void Dialog::on_recordPathEdt_textChanged(const QString &arg1)
@@ -899,4 +947,22 @@ void Dialog::showPortEditMenu(const QPoint &pos)
     menu->addAction(clearHistoryAction);
     menu->exec(ui->devicePortEdt->lineEdit()->mapToGlobal(pos));
     delete menu;
+}
+
+void Dialog::restartApplication()
+{
+    const QString program = QCoreApplication::applicationFilePath();
+    const QStringList args = QCoreApplication::arguments().mid(1);
+    const QString workdir = QCoreApplication::applicationDirPath();
+
+    if (QProcess::startDetached(program, args, workdir)) {
+        outLog(QString("restart application: %1").arg(program));
+        m_hideIcon->hide();
+        qApp->quit();
+        return;
+    }
+
+    const QString error = QString("restart application failed: %1").arg(program);
+    outLog(error);
+    QMessageBox::warning(this, tr("restart"), error);
 }

@@ -33,7 +33,7 @@ public:
     void getIPbyIp();
 
 private slots:
-    void onDeviceConnected(bool success, const QString& serial, const QString& deviceName, const QSize& size);
+    void onDeviceConnected(bool success, const QString& serial, const QString& deviceName, const QSize& size, int initialOrientation = -1);
     void onDeviceDisconnected(QString serial);
 
     void on_updateDevice_clicked();
@@ -44,6 +44,7 @@ private slots:
     void on_getIPBtn_clicked();
     void on_wirelessDisConnectBtn_clicked();
     void on_selectRecordPathBtn_clicked();
+    void on_openAppFolderBtn_clicked();
     void on_recordPathEdt_textChanged(const QString &arg1);
     void on_adbCommandBtn_clicked();
     void on_stopAdbBtn_clicked();
@@ -84,6 +85,7 @@ private:
     void saveIpHistory(const QString &ip);
     void loadPortHistory();
     void savePortHistory(const QString &port);
+    void restartApplication();
 
     void showPortEditMenu(const QPoint &pos);
 
@@ -96,6 +98,7 @@ private:
     QSystemTrayIcon *m_hideIcon;
     QMenu *m_menu;
     QAction *m_showWindow;
+    QAction *m_restart;
     QAction *m_quit;
     AudioOutput m_audioOutput;
     QTimer m_autoUpdatetimer;

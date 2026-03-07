@@ -39,6 +39,9 @@ constexpr int kRawInputSendHzMin = 60;
 constexpr int kRawInputSendHzMax = 1000;
 constexpr double kRawInputScaleMin = 0.1;
 constexpr double kRawInputScaleMax = 50.0;
+constexpr int kOrientationPollIntervalMs = 2000;
+constexpr int kOrientationProbeStepTimeoutMs = 450;
+constexpr int kOrientationProbeBudgetTimeoutMs = 1500;
 constexpr int kRelativeLookConfigDebounceMs = 120;
 constexpr quint32 kAiDeltaMagic = 0x31444941U; // "AID1" little-endian
 constexpr quint16 kAiDeltaVersion = 1;
@@ -59,6 +62,138 @@ QString resolveUserDataIniPath()
     }
 
     return appUserDataPath;
+}
+
+QRect buildCenteredCropRect(const QSize &canvasSize, int cropSize)
+{
+    if (!canvasSize.isValid()) {
+        return QRect();
+    }
+
+    if (cropSize <= 0) {
+        return QRect(QPoint(0, 0), canvasSize);
+    }
+
+    int cropW = qMin(cropSize, canvasSize.width());
+    int cropH = qMin(cropSize, canvasSize.height());
+    cropW &= ~1;
+    cropH &= ~1;
+    if (cropW < 2 || cropH < 2) {
+        return QRect(QPoint(0, 0), canvasSize);
+    }
+
+    const int maxX = qMax(0, canvasSize.width() - cropW);
+    const int maxY = qMax(0, canvasSize.height() - cropH);
+
+    int x = (canvasSize.width() - cropW) / 2;
+    int y = (canvasSize.height() - cropH) / 2;
+    x = qBound(0, x & ~1, maxX);
+    y = qBound(0, y & ~1, maxY);
+
+    return QRect(x, y, cropW, cropH);
+}
+
+bool isLandscapeSize(const QSize &size)
+{
+    return size.isValid() && !size.isEmpty() && size.width() > size.height();
+}
+
+bool normalizeRotationValue(const QString &captured, int &orientationOut)
+{
+    bool ok = false;
+    const int value = captured.toInt(&ok);
+    if (!ok) {
+        return false;
+    }
+
+    if (value >= 0 && value <= 3) {
+        orientationOut = value;
+        return true;
+    }
+
+    if ((value % 90) == 0 && value >= 0 && value <= 270) {
+        orientationOut = value / 90;
+        return true;
+    }
+
+    return false;
+}
+
+bool captureRegexOrientation(const QString &text, const QRegularExpression &re, int &orientationOut, bool preferLast)
+{
+    QRegularExpressionMatchIterator it = re.globalMatch(text);
+    bool matched = false;
+    int lastOrientation = 0;
+    while (it.hasNext()) {
+        const QRegularExpressionMatch match = it.next();
+        int candidate = 0;
+        if (!normalizeRotationValue(match.captured(1), candidate)) {
+            continue;
+        }
+        if (!preferLast) {
+            orientationOut = candidate;
+            return true;
+        }
+        lastOrientation = candidate;
+        matched = true;
+    }
+
+    if (matched) {
+        orientationOut = lastOrientation;
+    }
+    return matched;
+}
+
+bool parseWindowDisplaysOrientation(const QString &text, int &orientationOut)
+{
+    static const QRegularExpression currentRotationRe(
+        R"(mCurrentRotation\s*=\s*ROTATION_([0-9]{1,3}))",
+        QRegularExpression::CaseInsensitiveOption);
+    if (captureRegexOrientation(text, currentRotationRe, orientationOut, true)) {
+        return true;
+    }
+
+    static const QRegularExpression displayFramesRe(
+        R"(DisplayFrames[^\n]*\br\s*=\s*([0-9]{1,3}))",
+        QRegularExpression::CaseInsensitiveOption);
+    if (captureRegexOrientation(text, displayFramesRe, orientationOut, true)) {
+        return true;
+    }
+
+    static const QRegularExpression rotationRe(
+        R"(\bmRotation\s*=\s*(?:ROTATION_)?([0-9]{1,3}))",
+        QRegularExpression::CaseInsensitiveOption);
+    return captureRegexOrientation(text, rotationRe, orientationOut, true);
+}
+
+bool parseDisplayOrientation(const QString &text, int &orientationOut)
+{
+    static const QRegularExpression currentOrientationRe(
+        R"(mCurrentOrientation\s*=\s*([0-9]{1,3}))",
+        QRegularExpression::CaseInsensitiveOption);
+    if (captureRegexOrientation(text, currentOrientationRe, orientationOut, false)) {
+        return true;
+    }
+
+    static const QRegularExpression displayInfoRotationRe(
+        R"(DisplayDeviceInfo\{".*?",.*?\brotation\s+([0-9]{1,3}),\s+type\s+INTERNAL)",
+        QRegularExpression::CaseInsensitiveOption | QRegularExpression::DotMatchesEverythingOption);
+    return captureRegexOrientation(text, displayInfoRotationRe, orientationOut, false);
+}
+
+bool parseInputOrientation(const QString &text, int &orientationOut)
+{
+    static const QRegularExpression viewportOrientationRe(
+        R"(Viewport\s+INTERNAL:[^\n]*\borientation\s*=\s*([0-9]{1,3}))",
+        QRegularExpression::CaseInsensitiveOption);
+    if (captureRegexOrientation(text, viewportOrientationRe, orientationOut, false)) {
+        return true;
+    }
+
+    static const QRegularExpression surfaceOrientationRe(
+        R"(SurfaceOrientation\s*:\s*([0-9]{1,3}))",
+        QRegularExpression::CaseInsensitiveOption);
+    return captureRegexOrientation(text, surfaceOrientationRe, orientationOut, true);
 }
 } // namespace
 
@@ -99,8 +234,6 @@ VideoForm::~VideoForm()
 
 void VideoForm::initUI()
 {
-    loadVideoEnabledConfig();
-
     if (m_skin) {
         QPixmap phone;
         if (phone.load(":/res/phone.png")) {
@@ -120,6 +253,7 @@ void VideoForm::initUI()
     m_videoWidget->hide();
     ui->keepRatioWidget->setWidget(m_videoWidget);
     ui->keepRatioWidget->setWidthHeightRatio(m_widthHeightRatio);
+    loadVideoEnabledConfig();
 
     m_noVideoLabel = new QLabel(ui->keepRatioWidget);
     m_noVideoLabel->setAlignment(Qt::AlignCenter);
@@ -225,27 +359,98 @@ void VideoForm::showFPS(bool show)
 
 void VideoForm::updateRender(int width, int height, uint8_t* dataY, uint8_t* dataU, uint8_t* dataV, int linesizeY, int linesizeU, int linesizeV)
 {
-    if (m_videoWidget->isHidden()) {
-        if (m_loadingWidget) {
-            m_loadingWidget->close();
+    m_streamFrameSize = QSize(width, height);
+    if (!m_frameSize.isValid()) {
+        updateShowSize(m_streamFrameSize);
+    } else if (m_videoCenterCropSize <= 0 && m_lockDirectionIndex <= 0
+               && m_streamFrameSize.isValid() && !m_streamFrameSize.isEmpty()) {
+        const bool streamLandscape = isLandscapeSize(m_streamFrameSize);
+        const bool canvasLandscape = isLandscapeSize(m_frameSize);
+        if (streamLandscape != canvasLandscape) {
+            const QSize oldCanvas = m_frameSize;
+            updateShowSize(m_streamFrameSize);
+            qInfo() << "Stream orientation updated canvas:"
+                    << "oldCanvas=" << oldCanvas
+                    << "streamFrame=" << m_streamFrameSize
+                    << "newCanvas=" << m_frameSize
+                    << "cropSize=" << m_videoCenterCropSize;
+            resetOrientationProbeState();
         }
-        m_videoWidget->show();
     }
 
-    m_streamFrameSize = QSize(width, height);
-    if (!m_controlMapToScreen || !m_frameSize.isValid()) {
-        updateShowSize(m_streamFrameSize);
+    if (m_videoWidget->isHidden()) {
+        m_pendingVideoWidgetReveal = true;
+        if (isVisible()) {
+            if (m_loadingWidget) {
+                m_loadingWidget->close();
+            }
+            ui->keepRatioWidget->relayoutNow();
+            m_videoWidget->show();
+            applyVideoCanvasLayout();
+        }
     }
-    m_videoWidget->setFrameSize(m_streamFrameSize);
+
+    m_videoWidget->setStreamFrameSize(m_streamFrameSize);
+    applyVideoCanvasLayout();
+
+    if (!m_videoSessionFirstFrameLogged && m_streamFrameSize.isValid() && isVisible()
+        && m_videoWidget && m_videoWidget->size().isValid()
+        && m_videoWidget->framebufferPixelSize().isValid()) {
+        const QSize widgetLogicalSize = m_videoWidget ? m_videoWidget->size() : QSize();
+        const QSize framebufferPixelSize = m_videoWidget ? m_videoWidget->framebufferPixelSize() : QSize();
+        const qreal devicePixelRatio = m_videoWidget ? m_videoWidget->devicePixelRatioF() : 1.0;
+        qInfo() << "Video session first frame:"
+                << "widgetLogical=" << widgetLogicalSize
+                << "framebufferPixel=" << framebufferPixelSize
+                << "devicePixelRatio=" << devicePixelRatio
+                << "sessionCanvas=" << m_frameSize.width() << "x" << m_frameSize.height()
+                << "streamFrame=" << m_streamFrameSize.width() << "x" << m_streamFrameSize.height()
+                << "cropSize=" << m_videoCenterCropSize
+                << "controlMapToScreen=" << m_controlMapToScreen
+                << "contentRect=" << m_contentRect;
+        m_videoSessionFirstFrameLogged = true;
+    }
+
     m_videoWidget->updateTextures(dataY, dataU, dataV, linesizeY, linesizeU, linesizeV);
     updateNoVideoOverlay();
+}
+
+void VideoForm::applyVideoCanvasLayout()
+{
+    if (!m_videoWidget) {
+        return;
+    }
+
+    QSize canvasSize = m_frameSize;
+    if (!canvasSize.isValid()) {
+        canvasSize = m_streamFrameSize;
+    }
+
+    if (!canvasSize.isValid()) {
+        return;
+    }
+
+    m_contentRect = buildCenteredCropRect(canvasSize, m_controlMapToScreen ? m_videoCenterCropSize : 0);
+    if (!m_contentRect.isValid() || m_contentRect.isEmpty()) {
+        m_contentRect = QRect(QPoint(0, 0), canvasSize);
+    }
+
+    m_videoWidget->setCanvasSize(canvasSize);
+    m_videoWidget->setContentRect(m_contentRect);
 }
 void VideoForm::setSerial(const QString &serial)
 {
     m_serial = serial;
+    resetOrientationProbeState();
+    m_pendingInitialOrientation = -1;
     reloadViewControlSeparationConfig();
     startOrientationPollingIfNeeded();
     updateNoVideoOverlay();
+}
+
+void VideoForm::setInitialOrientationHint(int orientation)
+{
+    m_pendingInitialOrientation = orientation;
 }
 void VideoForm::showToolForm(bool show)
 {
@@ -498,12 +703,9 @@ void VideoForm::updateShowSize(const QSize &newSize)
 {
     if (m_frameSize != newSize) {
         m_frameSize = newSize;
-        if (m_videoWidget && newSize.isValid()) {
-            m_videoWidget->setFrameSize(newSize);
-        }
-
         m_widthHeightRatio = 1.0f * newSize.width() / newSize.height();
         ui->keepRatioWidget->setWidthHeightRatio(m_widthHeightRatio);
+        ui->keepRatioWidget->relayoutNow();
 
         bool vertical = m_widthHeightRatio < 1.0f ? true : false;
         QSize showSize = newSize;
@@ -540,8 +742,24 @@ void VideoForm::updateShowSize(const QSize &newSize)
                 updateStyleSheet(vertical);
             }
             moveCenter();
+            ui->keepRatioWidget->relayoutNow();
         }
     }
+
+    if (m_frameSize.isValid() && !m_frameSize.isEmpty()
+        && m_pendingInitialOrientation >= 0
+        && m_videoCenterCropSize > 0
+        && m_lockDirectionIndex <= 0) {
+        m_orientationBaseValue = m_pendingInitialOrientation;
+        m_orientationBaseUiSize = m_frameSize;
+        m_orientationBaseReady = true;
+        qInfo() << "VideoForm initial orientation hint accepted:"
+                << "orientation=" << m_pendingInitialOrientation
+                << "canvas=" << m_frameSize
+                << "cropSize=" << m_videoCenterCropSize;
+        m_pendingInitialOrientation = -1;
+    }
+    applyVideoCanvasLayout();
     startOrientationPollingIfNeeded();
     updateNoVideoOverlay();
 }
@@ -657,16 +875,6 @@ void VideoForm::reloadViewControlSeparationConfig()
 #endif
 
     const QString serial = m_serial.trimmed();
-    auto readBoolWithSerialOverride = [&](const QString &key, bool defaultValue) -> bool {
-        if (!serial.isEmpty()) {
-            const QString serialPath = QString("%1/%2").arg(serial).arg(key);
-            const QVariant serialValue = settings.value(serialPath);
-            if (serialValue.isValid()) {
-                return serialValue.toBool();
-            }
-        }
-        return settings.value(QString("common/%1").arg(key), defaultValue).toBool();
-    };
     auto readIntWithSerialOverride = [&](const QString &key, int defaultValue) -> int {
         bool ok = false;
         if (!serial.isEmpty()) {
@@ -684,44 +892,67 @@ void VideoForm::reloadViewControlSeparationConfig()
     };
 
     m_videoEnabled = settings.value("common/VideoEnabled", true).toBool();
-    const int cropSize = readIntWithSerialOverride("VideoCenterCropSize", 0);
-    const bool mapToScreen = readBoolWithSerialOverride("VideoCenterCropMapToScreen", false);
-    m_controlMapToScreen = m_videoEnabled && cropSize > 0 && mapToScreen;
+    m_lockDirectionIndex = settings.value("common/LockDirectionIndex", 0).toInt();
+    m_videoCenterCropSize = qMax(0, readIntWithSerialOverride("VideoCenterCropSize", 0));
+    m_controlMapToScreen = m_videoEnabled && m_videoCenterCropSize > 0;
+    m_videoSessionFirstFrameLogged = false;
+    resetOrientationProbeState();
+    if (!m_videoEnabled || m_videoCenterCropSize <= 0 || m_lockDirectionIndex > 0) {
+        m_pendingInitialOrientation = -1;
+    }
+    applyVideoCanvasLayout();
 
-    if (!m_controlMapToScreen) {
+    qInfo() << "Video session config loaded:"
+            << "serial=" << (serial.isEmpty() ? QString("common") : serial)
+            << "videoEnabled=" << m_videoEnabled
+            << "lockDirectionIndex=" << m_lockDirectionIndex
+            << "cropSize=" << m_videoCenterCropSize
+            << "controlMapToScreen=" << m_controlMapToScreen
+            << "sessionCanvas=" << m_frameSize
+            << "contentRect=" << m_contentRect;
+
+    if (!m_videoEnabled) {
         stopOrientationPolling();
     } else {
         startOrientationPollingIfNeeded();
     }
 }
 
+void VideoForm::resetOrientationProbeState()
+{
+    m_orientationBaseUiSize = QSize();
+    m_orientationBaseValue = -1;
+    m_orientationBaseReady = false;
+}
+
 bool VideoForm::parseSurfaceOrientationFromText(const QString &text, int &orientationOut)
 {
-    QRegularExpression surfaceOrientationRe(R"(SurfaceOrientation\s*:\s*([0-3]))",
-                                            QRegularExpression::CaseInsensitiveOption);
-    QRegularExpressionMatch surfaceMatch = surfaceOrientationRe.match(text);
-    if (surfaceMatch.hasMatch()) {
-        bool ok = false;
-        const int value = surfaceMatch.captured(1).toInt(&ok);
-        if (ok && value >= 0 && value <= 3) {
-            orientationOut = value;
-            return true;
-        }
+    return parseWindowDisplaysOrientation(text, orientationOut)
+        || parseDisplayOrientation(text, orientationOut)
+        || parseInputOrientation(text, orientationOut);
+}
+
+void VideoForm::resetOrientationProbeTask()
+{
+    if (m_orientationProbeStepTimer) {
+        m_orientationProbeStepTimer->stop();
+    }
+    if (m_orientationProbeBudgetTimer) {
+        m_orientationProbeBudgetTimer->stop();
     }
 
-    QRegularExpression fallbackRe(R"(orientation\s*[=:]\s*([0-3]))",
-                                  QRegularExpression::CaseInsensitiveOption);
-    QRegularExpressionMatch fallbackMatch = fallbackRe.match(text);
-    if (fallbackMatch.hasMatch()) {
-        bool ok = false;
-        const int value = fallbackMatch.captured(1).toInt(&ok);
-        if (ok && value >= 0 && value <= 3) {
-            orientationOut = value;
-            return true;
+    if (m_orientationProbeProcess) {
+        m_orientationProbeProcess->disconnect(this);
+        if (m_orientationProbeProcess->state() != QProcess::NotRunning) {
+            m_orientationProbeProcess->kill();
         }
+        m_orientationProbeProcess->deleteLater();
+        m_orientationProbeProcess.clear();
     }
 
-    return false;
+    m_orientationProbeCurrentSource.clear();
+    m_orientationProbeStepIndex = -1;
+    m_orientationProbeBusy = false;
 }
 
 void VideoForm::initOrientationPoller()
@@ -731,22 +962,35 @@ void VideoForm::initOrientationPoller()
     }
 
     m_orientationPollTimer = new QTimer(this);
-    m_orientationPollTimer->setInterval(2000);
+    m_orientationPollTimer->setInterval(kOrientationPollIntervalMs);
     connect(m_orientationPollTimer, &QTimer::timeout, this, &VideoForm::probeOrientationAsync);
+
+    m_orientationProbeStepTimer = new QTimer(this);
+    m_orientationProbeStepTimer->setSingleShot(true);
+    connect(m_orientationProbeStepTimer, &QTimer::timeout, this, &VideoForm::onOrientationProbeStepTimeout);
+
+    m_orientationProbeBudgetTimer = new QTimer(this);
+    m_orientationProbeBudgetTimer->setSingleShot(true);
+    connect(m_orientationProbeBudgetTimer, &QTimer::timeout, this, &VideoForm::onOrientationProbeBudgetTimeout);
 }
 
 void VideoForm::startOrientationPollingIfNeeded()
 {
-    if (!m_controlMapToScreen || !m_frameSize.isValid() || m_serial.trimmed().isEmpty()) {
+    if (!m_videoEnabled || !m_frameSize.isValid() || m_serial.trimmed().isEmpty()) {
         return;
     }
 
     initOrientationPoller();
     if (!m_orientationPollTimer->isActive()) {
         m_orientationPollTimer->start();
+        qInfo() << "Orientation polling enabled:"
+                << "intervalMs=" << kOrientationPollIntervalMs
+                << "serial=" << m_serial
+                << "videoEnabled=" << m_videoEnabled
+                << "cropSize=" << m_videoCenterCropSize;
     }
 
-    if (!m_orientationProbeProcess) {
+    if (!m_orientationProbeBusy) {
         probeOrientationAsync();
     }
 }
@@ -757,35 +1001,58 @@ void VideoForm::stopOrientationPolling()
         m_orientationPollTimer->stop();
     }
 
-    m_orientationBaseUiSize = QSize();
-    m_orientationBaseValue = -1;
-    m_orientationBaseReady = false;
-
-    if (m_orientationProbeProcess) {
-        if (m_orientationProbeProcess->state() != QProcess::NotRunning) {
-            m_orientationProbeProcess->terminate();
-            if (!m_orientationProbeProcess->waitForFinished(200)) {
-                m_orientationProbeProcess->kill();
-                m_orientationProbeProcess->waitForFinished(200);
-            }
-        }
-        m_orientationProbeProcess->deleteLater();
-        m_orientationProbeProcess.clear();
-    }
+    resetOrientationProbeState();
+    resetOrientationProbeTask();
 }
 
 void VideoForm::probeOrientationAsync()
 {
-    if (!m_controlMapToScreen || !m_frameSize.isValid() || m_serial.trimmed().isEmpty()) {
+    if (!m_videoEnabled || !m_frameSize.isValid() || m_serial.trimmed().isEmpty()) {
         return;
     }
 
-    if (m_orientationProbeProcess) {
-        if (m_orientationProbeProcess->state() != QProcess::NotRunning) {
-            return;
-        }
-        m_orientationProbeProcess->deleteLater();
-        m_orientationProbeProcess.clear();
+    if (m_orientationProbeBusy) {
+        return;
+    }
+
+    initOrientationPoller();
+    resetOrientationProbeTask();
+
+    m_orientationProbeBusy = true;
+    m_orientationProbeStepIndex = 0;
+    m_orientationProbeCurrentSource.clear();
+    m_orientationProbeTotalElapsed.restart();
+    if (m_orientationProbeBudgetTimer) {
+        m_orientationProbeBudgetTimer->start(kOrientationProbeBudgetTimeoutMs);
+    }
+    startNextOrientationProbeStep();
+}
+
+void VideoForm::startNextOrientationProbeStep()
+{
+    if (!m_orientationProbeBusy) {
+        return;
+    }
+
+    QStringList probeArgs;
+    switch (m_orientationProbeStepIndex) {
+    case 0:
+        m_orientationProbeCurrentSource = QStringLiteral("window displays");
+        probeArgs << "shell" << "dumpsys" << "window" << "displays";
+        break;
+    case 1:
+        m_orientationProbeCurrentSource = QStringLiteral("display");
+        probeArgs << "shell" << "dumpsys" << "display";
+        break;
+    case 2:
+        m_orientationProbeCurrentSource = QStringLiteral("input");
+        probeArgs << "shell" << "dumpsys" << "input";
+        break;
+    default:
+        qInfo() << "Orientation probe finished without a usable result:"
+                << "probeDurationMs=" << m_orientationProbeTotalElapsed.elapsed();
+        resetOrientationProbeTask();
+        return;
     }
 
     QString adbPath = QString::fromLocal8Bit(qgetenv("QTSCRCPY_ADB_PATH"));
@@ -793,63 +1060,206 @@ void VideoForm::probeOrientationAsync()
         adbPath = "adb";
     }
 
-    QStringList args;
     const QString serial = m_serial.trimmed();
+    QStringList args;
     if (!serial.isEmpty()) {
         args << "-s" << serial;
     }
-    args << "shell" << "dumpsys" << "input";
+    args.append(probeArgs);
 
     QProcess *process = new QProcess(this);
     m_orientationProbeProcess = process;
+    m_orientationProbeStepElapsed.restart();
 
     connect(process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
             this, &VideoForm::handleOrientationProbeFinished);
+    connect(process, &QProcess::errorOccurred, this, &VideoForm::onOrientationProbeProcessError);
 
-    connect(process, &QProcess::errorOccurred, this, [this, process](QProcess::ProcessError) {
-        if (m_orientationProbeProcess == process) {
-            m_orientationProbeProcess.clear();
-        }
-        process->deleteLater();
-    });
+    if (m_orientationProbeStepTimer) {
+        m_orientationProbeStepTimer->start(kOrientationProbeStepTimeoutMs);
+    }
 
     process->start(adbPath, args);
+}
+
+void VideoForm::advanceOrientationProbeStep()
+{
+    if (!m_orientationProbeBusy) {
+        return;
+    }
+
+    if (m_orientationProbeStepTimer) {
+        m_orientationProbeStepTimer->stop();
+    }
+
+    if (m_orientationProbeProcess) {
+        m_orientationProbeProcess->disconnect(this);
+        if (m_orientationProbeProcess->state() != QProcess::NotRunning) {
+            m_orientationProbeProcess->kill();
+        }
+        m_orientationProbeProcess->deleteLater();
+        m_orientationProbeProcess.clear();
+    }
+
+    ++m_orientationProbeStepIndex;
+    startNextOrientationProbeStep();
+}
+
+void VideoForm::onOrientationProbeStepTimeout()
+{
+    if (!m_orientationProbeBusy) {
+        return;
+    }
+
+    qWarning() << "Orientation probe step timeout:"
+               << "source=" << m_orientationProbeCurrentSource
+               << "stepTimeoutMs=" << kOrientationProbeStepTimeoutMs
+               << "probeDurationMs=" << m_orientationProbeTotalElapsed.elapsed();
+    advanceOrientationProbeStep();
+}
+
+void VideoForm::onOrientationProbeBudgetTimeout()
+{
+    if (!m_orientationProbeBusy) {
+        return;
+    }
+
+    qWarning() << "Orientation probe total budget timeout:"
+               << "totalBudgetMs=" << kOrientationProbeBudgetTimeoutMs
+               << "lastSource=" << m_orientationProbeCurrentSource;
+    resetOrientationProbeTask();
+}
+
+void VideoForm::onOrientationProbeProcessError(QProcess::ProcessError error)
+{
+    QProcess *process = qobject_cast<QProcess *>(sender());
+    if (!process || process != m_orientationProbeProcess) {
+        return;
+    }
+
+    qWarning() << "Orientation probe step error:"
+               << "source=" << m_orientationProbeCurrentSource
+               << "error=" << error
+               << "probeDurationMs=" << m_orientationProbeTotalElapsed.elapsed();
+    advanceOrientationProbeStep();
+}
+
+void VideoForm::applyResolvedOrientation(int orientation)
+{
+    if (m_lockDirectionIndex > 0) {
+        if (m_frameSize.isValid() && !m_frameSize.isEmpty()) {
+            m_orientationBaseReady = true;
+            m_orientationBaseValue = orientation;
+            m_orientationBaseUiSize = m_frameSize;
+        }
+        return;
+    }
+
+    if (m_videoCenterCropSize > 0) {
+        if (!m_frameSize.isValid() || m_frameSize.isEmpty()) {
+            return;
+        }
+
+        if (m_pendingInitialOrientation >= 0) {
+            qInfo() << "Orientation probe waiting for initial orientation hint:"
+                    << "pendingInitialOrientation=" << m_pendingInitialOrientation
+                    << "canvas=" << m_frameSize
+                    << "orientation=" << orientation;
+            return;
+        }
+
+        if (!m_orientationBaseReady) {
+            m_orientationBaseReady = true;
+            m_orientationBaseValue = orientation;
+            m_orientationBaseUiSize = m_frameSize;
+            qInfo() << "Orientation probe using fallback baseline:"
+                    << "orientation=" << orientation
+                    << "canvas=" << m_frameSize
+                    << "cropSize=" << m_videoCenterCropSize;
+            return;
+        }
+
+        const int previousOrientation = m_orientationBaseValue;
+        const int delta = (orientation - previousOrientation + 4) % 4;
+        if ((delta % 2) == 1 && m_frameSize.isValid() && !m_frameSize.isEmpty()) {
+            const QSize oldCanvas = m_frameSize;
+            const QSize targetCanvas = m_frameSize.transposed();
+            if (targetCanvas.isValid() && targetCanvas != m_frameSize) {
+                qInfo() << "Orientation probe transposed cropped canvas:"
+                        << "oldCanvas=" << oldCanvas
+                        << "newCanvas=" << targetCanvas
+                        << "orientation=" << orientation
+                        << "baseOrientation=" << previousOrientation
+                        << "cropSize=" << m_videoCenterCropSize;
+                updateShowSize(targetCanvas);
+                applyVideoCanvasLayout();
+            }
+        }
+
+        m_orientationBaseReady = true;
+        m_orientationBaseValue = orientation;
+        m_orientationBaseUiSize = m_frameSize;
+        return;
+    }
+
+    if (!m_orientationBaseReady) {
+        if (m_frameSize.isValid() && !m_frameSize.isEmpty()) {
+            m_orientationBaseReady = true;
+            m_orientationBaseValue = orientation;
+            m_orientationBaseUiSize = m_frameSize;
+        }
+        return;
+    }
+
+    const int delta = (orientation - m_orientationBaseValue + 4) % 4;
+    QSize targetSize = m_orientationBaseUiSize;
+    if ((delta % 2) == 1) {
+        targetSize.transpose();
+    }
+    if (targetSize.isValid() && targetSize != m_frameSize) {
+        updateShowSize(targetSize);
+    }
+    if (m_frameSize.isValid() && !m_frameSize.isEmpty()) {
+        m_orientationBaseReady = true;
+        m_orientationBaseValue = orientation;
+        m_orientationBaseUiSize = m_frameSize;
+    }
 }
 
 void VideoForm::handleOrientationProbeFinished(int exitCode, QProcess::ExitStatus status)
 {
     QProcess *process = qobject_cast<QProcess *>(sender());
-    if (!process) {
+    if (!process || process != m_orientationProbeProcess) {
         return;
+    }
+
+    if (m_orientationProbeStepTimer) {
+        m_orientationProbeStepTimer->stop();
     }
 
     const QString output = QString::fromUtf8(process->readAllStandardOutput())
                            + QString::fromUtf8(process->readAllStandardError());
+    int orientation = -1;
+    const bool success = status == QProcess::NormalExit
+        && exitCode == 0
+        && parseSurfaceOrientationFromText(output, orientation);
 
-    if (status == QProcess::NormalExit && exitCode == 0) {
-        int orientation = 0;
-        if (parseSurfaceOrientationFromText(output, orientation)) {
-            if (!m_orientationBaseReady) {
-                m_orientationBaseReady = true;
-                m_orientationBaseValue = orientation;
-                m_orientationBaseUiSize = m_frameSize;
-            } else {
-                const int delta = (orientation - m_orientationBaseValue + 4) % 4;
-                QSize targetSize = m_orientationBaseUiSize;
-                if ((delta % 2) == 1) {
-                    targetSize.transpose();
-                }
-                if (targetSize.isValid() && targetSize != m_frameSize) {
-                    updateShowSize(targetSize);
-                }
-            }
-        }
+    if (success) {
+        qInfo() << "Orientation probe step result:"
+                << "source=" << m_orientationProbeCurrentSource
+                << "probeDurationMs=" << m_orientationProbeTotalElapsed.elapsed()
+                << "orientation=" << orientation
+                << "result=success";
+        applyResolvedOrientation(orientation);
+        resetOrientationProbeTask();
+        return;
     }
 
-    if (m_orientationProbeProcess == process) {
-        m_orientationProbeProcess.clear();
-    }
-    process->deleteLater();
+    qInfo() << "Orientation probe step result:"
+            << "source=" << m_orientationProbeCurrentSource
+            << "probeDurationMs=" << m_orientationProbeTotalElapsed.elapsed()
+            << "result=fallback";
+    advanceOrientationProbeStep();
 }
 
 QSize VideoForm::eventFrameSize() const
@@ -1008,7 +1418,6 @@ void VideoForm::reloadRelativeLookInputConfig()
     settings.setIniCodec("UTF-8");
 #endif
 
-    reloadViewControlSeparationConfig();
     const QString serialKeyPrefix = m_serial.trimmed();
     const bool hasSerialSection = !serialKeyPrefix.isEmpty();
     const QString rawInputDeviceKey = hasSerialSection ? (serialKeyPrefix + "/RelativeLookRawInput") : QString();
@@ -1430,7 +1839,17 @@ void VideoForm::paintEvent(QPaintEvent *paint)
 
 void VideoForm::showEvent(QShowEvent *event)
 {
-    Q_UNUSED(event)
+    QWidget::showEvent(event);
+    ui->keepRatioWidget->relayoutNow();
+    applyVideoCanvasLayout();
+    if (m_pendingVideoWidgetReveal && m_videoWidget) {
+        if (m_loadingWidget) {
+            m_loadingWidget->close();
+        }
+        m_videoWidget->show();
+        m_videoWidget->update();
+        m_pendingVideoWidgetReveal = false;
+    }
     if (!isFullScreen() && this->show_toolbar) {
         QTimer::singleShot(500, this, [this](){
             showToolForm(this->show_toolbar);
@@ -1440,8 +1859,22 @@ void VideoForm::showEvent(QShowEvent *event)
 
 void VideoForm::resizeEvent(QResizeEvent *event)
 {
-    Q_UNUSED(event)
+    QWidget::resizeEvent(event);
     updateNoVideoOverlay();
+    ui->keepRatioWidget->relayoutNow();
+    if (isVisible() && m_streamFrameSize.isValid()) {
+        applyVideoCanvasLayout();
+        if (m_pendingVideoWidgetReveal && m_videoWidget) {
+            if (m_loadingWidget) {
+                m_loadingWidget->close();
+            }
+            m_videoWidget->show();
+            m_pendingVideoWidgetReveal = false;
+        }
+        if (m_videoWidget) {
+            m_videoWidget->update();
+        }
+    }
     QSize goodSize = ui->keepRatioWidget->goodSize();
     if (goodSize.isEmpty()) {
         return;

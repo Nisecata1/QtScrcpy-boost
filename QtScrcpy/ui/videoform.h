@@ -2,6 +2,7 @@
 #define VIDEOFORM_H
 
 #include <QFileSystemWatcher>
+#include <QElapsedTimer>
 #include <QPointF>
 #include <QPointer>
 #include <QProcess>
@@ -31,6 +32,7 @@ public:
     void updateShowSize(const QSize &newSize);
     void updateRender(int width, int height, uint8_t* dataY, uint8_t* dataU, uint8_t* dataV, int linesizeY, int linesizeU, int linesizeV);
     void setSerial(const QString& serial);
+    void setInitialOrientationHint(int orientation);
     QRect getGrabCursorRect();
     const QSize &frameSize();
     void resizeSquare();
@@ -51,10 +53,19 @@ private:
     void loadVideoEnabledConfig();
     void updateNoVideoOverlay();
     void reloadViewControlSeparationConfig();
+    void applyVideoCanvasLayout();
+    void resetOrientationProbeState();
+    void resetOrientationProbeTask();
     void initOrientationPoller();
     void startOrientationPollingIfNeeded();
     void stopOrientationPolling();
     void probeOrientationAsync();
+    void startNextOrientationProbeStep();
+    void advanceOrientationProbeStep();
+    void onOrientationProbeStepTimeout();
+    void onOrientationProbeBudgetTimeout();
+    void onOrientationProbeProcessError(QProcess::ProcessError error);
+    void applyResolvedOrientation(int orientation);
     void handleOrientationProbeFinished(int exitCode, QProcess::ExitStatus status);
     static bool parseSurfaceOrientationFromText(const QString &text, int &orientationOut);
     QSize eventFrameSize() const;
@@ -117,12 +128,25 @@ private:
     bool show_toolbar = true;
     bool m_videoEnabled = true;
     bool m_controlMapToScreen = false;
+    int m_videoCenterCropSize = 0;
+    int m_lockDirectionIndex = 0;
+    bool m_videoSessionFirstFrameLogged = false;
+    bool m_pendingVideoWidgetReveal = false;
     QSize m_streamFrameSize;
+    QRect m_contentRect;
     QTimer *m_orientationPollTimer = nullptr;
+    QPointer<QTimer> m_orientationProbeStepTimer;
+    QPointer<QTimer> m_orientationProbeBudgetTimer;
     QPointer<QProcess> m_orientationProbeProcess;
+    bool m_orientationProbeBusy = false;
+    int m_orientationProbeStepIndex = -1;
+    QString m_orientationProbeCurrentSource;
+    QElapsedTimer m_orientationProbeTotalElapsed;
+    QElapsedTimer m_orientationProbeStepElapsed;
     QSize m_orientationBaseUiSize;
     int m_orientationBaseValue = -1;
     bool m_orientationBaseReady = false;
+    int m_pendingInitialOrientation = -1;
 
     bool m_cursorGrabbed = false;
     bool m_rawInputEnabled = true;

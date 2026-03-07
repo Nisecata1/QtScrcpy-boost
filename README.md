@@ -207,6 +207,12 @@ This means for packaged/portable usage, you should edit:
 - `userdata.ini` should not contain comments (it is rewritten by `QSettings`; comments may be lost or become malformed keys).
 - `RelativeLookCoordMode` and `RelativeLookLogicalSize` are read from `[common]`.
 - `RelativeLookRawInput`, `RelativeLookSendHz`, `RelativeLookRawScale` support per-device override from `[<serial>]` (ADB serial section) with `[common]` fallback.
+- If `VideoCenterCropSize > 0`, center crop is enabled and control coordinates automatically stay mapped to the whole device screen. The video window represents the full-screen canvas, and the cropped stream is drawn at its real centered position inside that canvas.
+- Center crop reduces the captured/encoded video region; it is not a guaranteed reduction of the game's on-device render workload.
+- OpenGL viewport sizing is computed from the actual viewport observed at the start of `paintGL()`, not by trusting `resizeGL(w, h)` alone, so Windows high DPI scaling does not shrink the image into the lower-left corner.
+- `VideoEnabled` and `VideoCenterCrop*` are session-scoped settings: change them, then reconnect the current device session to apply.
+- Device orientation is polled every 2 seconds for all video sessions, not only center-crop sessions, so both cropped and full-canvas windows auto-adjust after rotation.
+- When `LockDirectionIndex=0`, QtScrcpy keeps scrcpy's default auto-rotation behavior and does not send `capture_orientation=0` to the server. `capture_orientation` is only sent for explicit orientation locks or explicit non-zero capture rotation.
 - Effective `MaxFps` and `CodecName` are currently read from `userdata.ini:[common]` during server launch (not from `config.ini`).
 
 ### `config.ini` keys (`[common]`)
@@ -261,6 +267,10 @@ This means for packaged/portable usage, you should edit:
 | `MaxFps` | `120` (effective fallback at server start) | Effective location for FPS cap |
 | `CodecName` | empty | Effective location for explicit encoder name |
 | `AudioEnable` | `false` | If `false`, sends `audio=false` to scrcpy server |
+| `VideoEnabled` | `true` | Enable video stream; `false` means no-video control mode |
+| `VideoCenterCropSize` | `0` | `0` disables center crop and restores full-canvas display; `>0` crops to a centered square, draws that crop inside the full-screen canvas, keeps control mapped to the whole screen, and requires reconnect to apply |
+| `VideoCenterCropFallbackWidth` | `2400` | Fallback physical width when `wm size` cannot be resolved for crop setup |
+| `VideoCenterCropFallbackHeight` | `1080` | Fallback physical height when `wm size` cannot be resolved for crop setup |
 | `MouseSmoothFrames` | `4` | Mouse delta smoothing frames, clamped to `1..20` |
 | `RelativeLookCoordMode` | `logical` | `logical` or `video` |
 | `RelativeLookLogicalSize` | `65535` | Clamped to `4096..65535` |
@@ -293,7 +303,7 @@ This means for packaged/portable usage, you should edit:
 | `RelativeLookCoordMode`, `RelativeLookLogicalSize` | `userdata.ini` | Polled reload in game input path (`~200ms` check interval) |
 | `SteerWheelRecovery*` | `userdata.ini` | Polled reload in game input path (`~80ms` check interval) |
 | `MouseSmoothFrames` | `userdata.ini` | Loaded once per input-converter lifecycle (reconnect device/app to guarantee refresh) |
-| `MaxFps`, `CodecName`, `AudioEnable` | `userdata.ini` | Applied when starting scrcpy server (restart service needed) |
+| `MaxFps`, `CodecName`, `AudioEnable`, `VideoEnabled`, `VideoCenterCrop*` | `userdata.ini` | Applied when starting the current scrcpy device session (reconnect current device needed) |
 
 ### Remote cursor feature requirements
 

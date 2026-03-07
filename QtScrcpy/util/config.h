@@ -36,6 +36,7 @@ public:
     // config
     QString getLanguage();
     QString getTitle();
+    QString getStartupConsoleText();
     int getMaxFps();
     int getDesktopOpenGL();
     int getSkin();

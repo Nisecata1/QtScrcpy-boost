@@ -25,6 +25,11 @@ void KeepRatioWidget::setWidthHeightRatio(float widthHeightRatio)
     adjustSubWidget();
 }
 
+void KeepRatioWidget::relayoutNow()
+{
+    adjustSubWidget();
+}
+
 const QSize KeepRatioWidget::goodSize()
 {
     if (!m_subWidget || m_widthHeightRatio < 0.0f) {

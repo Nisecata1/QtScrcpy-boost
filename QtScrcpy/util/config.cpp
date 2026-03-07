@@ -17,6 +17,9 @@
 #define COMMON_TITLE_KEY "WindowTitle"
 #define COMMON_TITLE_DEF QCoreApplication::applicationName()
 
+#define COMMON_STARTUP_CONSOLE_TEXT_KEY "StartupConsoleText"
+#define COMMON_STARTUP_CONSOLE_TEXT_DEF ""
+
 #define COMMON_PUSHFILE_KEY "PushFilePath"
 #define COMMON_PUSHFILE_DEF "/sdcard/"
 
@@ -402,6 +405,15 @@ QString Config::getTitle()
     title = m_settings->value(COMMON_TITLE_KEY, COMMON_TITLE_DEF).toString();
     m_settings->endGroup();
     return title;
+}
+
+QString Config::getStartupConsoleText()
+{
+    QString startupConsoleText;
+    m_settings->beginGroup(GROUP_COMMON);
+    startupConsoleText = m_settings->value(COMMON_STARTUP_CONSOLE_TEXT_KEY, COMMON_STARTUP_CONSOLE_TEXT_DEF).toString();
+    m_settings->endGroup();
+    return startupConsoleText;
 }
 
 void Config::saveIpHistory(const QString &ip)

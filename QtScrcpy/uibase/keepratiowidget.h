@@ -13,10 +13,13 @@ public:
 
     void setWidget(QWidget *w);
     void setWidthHeightRatio(float widthHeightRatio);
+    void relayoutNow();
     const QSize goodSize();
 
 protected:
     void resizeEvent(QResizeEvent *event);
+
+private:
     void adjustSubWidget();
 
 private:

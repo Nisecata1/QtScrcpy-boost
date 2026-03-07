@@ -114,19 +114,82 @@ QSize QYUVOpenGLWidget::sizeHint() const
     return size();
 }
 
-void QYUVOpenGLWidget::setFrameSize(const QSize &frameSize)
+void QYUVOpenGLWidget::setStreamFrameSize(const QSize &frameSize)
 {
-    if (m_frameSize != frameSize) {
-        m_frameSize = frameSize;
+    if (m_streamFrameSize != frameSize) {
+        m_streamFrameSize = frameSize;
         m_needUpdate = true;
         // inittexture immediately
         repaint();
     }
 }
 
-const QSize &QYUVOpenGLWidget::frameSize()
+const QSize &QYUVOpenGLWidget::frameSize() const
 {
-    return m_frameSize;
+    return m_streamFrameSize;
+}
+
+void QYUVOpenGLWidget::setCanvasSize(const QSize &canvasSize)
+{
+    if (m_canvasSize == canvasSize) {
+        return;
+    }
+
+    m_canvasSize = canvasSize;
+    update();
+}
+
+const QSize &QYUVOpenGLWidget::canvasSize() const
+{
+    return m_canvasSize;
+}
+
+void QYUVOpenGLWidget::setContentRect(const QRect &contentRect)
+{
+    if (m_contentRect == contentRect) {
+        return;
+    }
+
+    m_contentRect = contentRect;
+    update();
+}
+
+const QRect &QYUVOpenGLWidget::contentRect() const
+{
+    return m_contentRect;
+}
+
+QSize QYUVOpenGLWidget::framebufferPixelSize() const
+{
+    return m_framebufferPixelSize;
+}
+
+QSize QYUVOpenGLWidget::effectiveCanvasSize() const
+{
+    if (m_canvasSize.isValid()) {
+        return m_canvasSize;
+    }
+    return m_streamFrameSize;
+}
+
+QRect QYUVOpenGLWidget::effectiveContentRect() const
+{
+    const QSize canvas = effectiveCanvasSize();
+    if (!canvas.isValid()) {
+        return QRect();
+    }
+
+    const QRect canvasRect(QPoint(0, 0), canvas);
+    if (!m_contentRect.isValid() || m_contentRect.isEmpty()) {
+        return canvasRect;
+    }
+
+    const QRect clipped = m_contentRect.normalized().intersected(canvasRect);
+    if (!clipped.isValid() || clipped.isEmpty()) {
+        return canvasRect;
+    }
+
+    return clipped;
 }
 
 void QYUVOpenGLWidget::updateTextures(quint8 *dataY, quint8 *dataU, quint8 *dataV, quint32 linesizeY, quint32 linesizeU, quint32 linesizeV)
@@ -166,37 +229,41 @@ void QYUVOpenGLWidget::paintGL()
         m_needUpdate = false;
     }
 
-    if (m_textureInited && m_frameSize.width() > 0 && m_frameSize.height() > 0) {
-        const int viewW = width();
-        const int viewH = height();
+    if (m_textureInited && m_streamFrameSize.width() > 0 && m_streamFrameSize.height() > 0) {
+        GLint currentViewport[4] = { 0, 0, 0, 0 };
+        glGetIntegerv(GL_VIEWPORT, currentViewport);
+
+        QSize viewPixelSize;
+        if (currentViewport[2] > 0 && currentViewport[3] > 0) {
+            viewPixelSize = QSize(currentViewport[2], currentViewport[3]);
+            m_framebufferPixelSize = viewPixelSize;
+        } else if (m_framebufferPixelSize.isValid()) {
+            viewPixelSize = m_framebufferPixelSize;
+        } else {
+            const qreal dpr = devicePixelRatioF();
+            viewPixelSize = QSize(qRound(width() * dpr), qRound(height() * dpr));
+        }
+
+        const int viewW = qMax(1, viewPixelSize.width());
+        const int viewH = qMax(1, viewPixelSize.height());
+        const QSize canvasSize = effectiveCanvasSize();
+        const QRect contentRect = effectiveContentRect();
 
         int vpX = 0;
         int vpY = 0;
-        int vpW = qMax(1, viewW);
-        int vpH = qMax(1, viewH);
+        int vpW = viewW;
+        int vpH = viewH;
 
-        if (viewW > 0 && viewH > 0) {
-            if (m_frameSize.width() == m_frameSize.height()) {
-                const int side = qMax(1, qMin(viewW, viewH));
-                vpW = side;
-                vpH = side;
-                vpX = (viewW - side) / 2;
-                vpY = (viewH - side) / 2;
-            } else {
-                const double frameAspect = static_cast<double>(m_frameSize.width()) / static_cast<double>(m_frameSize.height());
-                const double viewAspect = static_cast<double>(viewW) / static_cast<double>(viewH);
-                if (viewAspect > frameAspect) {
-                    vpH = viewH;
-                    vpW = qMax(1, qRound(vpH * frameAspect));
-                    vpX = (viewW - vpW) / 2;
-                    vpY = 0;
-                } else {
-                    vpW = viewW;
-                    vpH = qMax(1, qRound(vpW / frameAspect));
-                    vpX = 0;
-                    vpY = (viewH - vpH) / 2;
-                }
-            }
+        if (viewW > 0 && viewH > 0 && canvasSize.width() > 0 && canvasSize.height() > 0) {
+            vpX = qRound(static_cast<double>(contentRect.x()) * viewW / canvasSize.width());
+            vpY = qRound(static_cast<double>(canvasSize.height() - contentRect.y() - contentRect.height()) * viewH / canvasSize.height());
+            vpW = qRound(static_cast<double>(contentRect.width()) * viewW / canvasSize.width());
+            vpH = qRound(static_cast<double>(contentRect.height()) * viewH / canvasSize.height());
+
+            vpX = qBound(0, vpX, qMax(0, viewW - 1));
+            vpY = qBound(0, vpY, qMax(0, viewH - 1));
+            vpW = qBound(1, vpW, qMax(1, viewW - vpX));
+            vpH = qBound(1, vpH, qMax(1, viewH - vpY));
         }
 
         glViewport(vpX, vpY, vpW, vpH);
@@ -219,8 +286,7 @@ void QYUVOpenGLWidget::paintGL()
 }
 void QYUVOpenGLWidget::resizeGL(int width, int height)
 {
-    Q_UNUSED(width)
-    Q_UNUSED(height)
+    m_framebufferPixelSize = QSize(width, height);
     update();
 }
 void QYUVOpenGLWidget::initShader()
@@ -256,6 +322,11 @@ void QYUVOpenGLWidget::initShader()
 
 void QYUVOpenGLWidget::initTextures()
 {
+    if (m_streamFrameSize.width() <= 0 || m_streamFrameSize.height() <= 0) {
+        m_textureInited = false;
+        return;
+    }
+
     // 鍒涘缓绾圭悊
     glGenTextures(1, &m_texture[0]);
     glBindTexture(GL_TEXTURE_2D, m_texture[0]);
@@ -265,7 +336,7 @@ void QYUVOpenGLWidget::initTextures()
     // 璁剧疆st鏂瑰悜涓婄汗鐞嗚秴鍑哄潗鏍囨椂鐨勬樉绀虹瓥鐣?
     glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, m_frameSize.width(), m_frameSize.height(), 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, nullptr);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, m_streamFrameSize.width(), m_streamFrameSize.height(), 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, nullptr);
 
     glGenTextures(1, &m_texture[1]);
     glBindTexture(GL_TEXTURE_2D, m_texture[1]);
@@ -273,7 +344,7 @@ void QYUVOpenGLWidget::initTextures()
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, m_frameSize.width() / 2, m_frameSize.height() / 2, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, nullptr);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, m_streamFrameSize.width() / 2, m_streamFrameSize.height() / 2, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, nullptr);
 
     glGenTextures(1, &m_texture[2]);
     glBindTexture(GL_TEXTURE_2D, m_texture[2]);
@@ -283,7 +354,7 @@ void QYUVOpenGLWidget::initTextures()
     // 璁剧疆st鏂瑰悜涓婄汗鐞嗚秴鍑哄潗鏍囨椂鐨勬樉绀虹瓥鐣?
     glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, m_frameSize.width() / 2, m_frameSize.height() / 2, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, nullptr);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, m_streamFrameSize.width() / 2, m_streamFrameSize.height() / 2, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, nullptr);
 
     m_textureInited = true;
 }
@@ -303,7 +374,7 @@ void QYUVOpenGLWidget::updateTexture(GLuint texture, quint32 textureType, quint8
     if (!pixels)
         return;
 
-    QSize size = 0 == textureType ? m_frameSize : m_frameSize / 2;
+    QSize size = 0 == textureType ? m_streamFrameSize : m_streamFrameSize / 2;
 
     makeCurrent();
     glBindTexture(GL_TEXTURE_2D, texture);
