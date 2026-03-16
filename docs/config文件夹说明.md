@@ -1,9 +1,10 @@
 说明：
 1. 这个目录里的文件主要是示例与默认配置；程序运行时优先读取 `QtScrcpy.exe` 同级目录下的 `config` 文件夹。
-2. 本地当前运行目录示例：`C:\develop\QtScrcpy-personal\output\x64\RelWithDebInfo\config`
+2. 本地当前运行目录示例：`C:\develop\QtScrcpy-boost\output\x64\Release\config`
 3. `userdata.ini` 由 `QSettings` 管理，不建议直接在里面穿插大量注释；详细说明统一放在这里。
 
 [common]
+更正：当前仓库默认示例路径为 `C:\develop\QtScrcpy-boost\output\x64\Release\config`；如果显式构建 `Debug`、`MinSizeRel` 或 `RelWithDebInfo`，最后一级目录会跟随对应配置名。
 
 `userdata.ini` 的 `[common]` 继续存放通用启动配置，例如录屏路径、码率、窗口行为、RelativeLook 的公共默认值等。
 

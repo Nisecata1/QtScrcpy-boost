@@ -585,6 +585,7 @@ void VideoForm::setSerial(const QString &serial)
     if (m_toolForm) {
         m_toolForm->setSerial(serial);
     }
+    bindDeviceRecordingState();
     resetOrientationProbeState();
     m_pendingInitialOrientation = -1;
     reloadViewControlSeparationConfig();
@@ -645,6 +646,103 @@ void VideoForm::setScriptBinding(const QString &filePath, const QString &display
     }
 }
 
+void VideoForm::bindDeviceRecordingState()
+{
+    if (m_boundDevice) {
+        disconnect(m_boundDevice.data(), nullptr, this, nullptr);
+    }
+
+    m_recordingActive = false;
+    m_recordingFilePath.clear();
+    m_boundDevice = qsc::IDeviceManage::getInstance().getDevice(m_serial);
+    if (m_boundDevice) {
+        connect(m_boundDevice.data(), &qsc::IDevice::recordingStateChanged,
+                this, &VideoForm::handleRecordingStateChanged);
+        connect(m_boundDevice.data(), &qsc::IDevice::recordingError,
+                this, &VideoForm::handleRecordingError);
+        m_recordingActive = m_boundDevice->isRecording();
+    }
+
+    refreshToolFormRecordingState();
+}
+
+void VideoForm::refreshToolFormRecordingState()
+{
+    if (m_toolForm) {
+        m_toolForm->setRecordingState(m_recordingActive, m_recordingFilePath);
+    }
+}
+
+QString VideoForm::currentRecordFormat() const
+{
+    const UserBootConfig config = Config::getInstance().getUserBootConfig();
+    switch (config.recordFormatIndex) {
+    case 1:
+        return QStringLiteral("mkv");
+    case 0:
+    default:
+        return QStringLiteral("mp4");
+    }
+}
+
+void VideoForm::startRecordingFromToolForm()
+{
+    if (!m_boundDevice) {
+        QMessageBox::warning(this, tr("录制屏幕"), tr("当前设备会话不可用，无法开始录制。"));
+        return;
+    }
+
+    const UserBootConfig config = Config::getInstance().getUserBootConfig();
+    const QString recordPath = config.recordPath.trimmed();
+    if (recordPath.isEmpty()) {
+        QMessageBox::warning(this, tr("录制屏幕"), tr("请先在主窗口选择录屏保存目录。"));
+        return;
+    }
+
+    const QString format = currentRecordFormat();
+    if (format.isEmpty()) {
+        QMessageBox::warning(this, tr("录制屏幕"), tr("当前录制格式无效，请在主窗口重新选择录制格式。"));
+        return;
+    }
+
+    QString errorString;
+    if (!m_boundDevice->startRecording(recordPath, format, &errorString) && !errorString.isEmpty()) {
+        QMessageBox::warning(this, tr("录制屏幕"), errorString);
+    }
+}
+
+void VideoForm::stopRecordingFromToolForm()
+{
+    if (!m_boundDevice) {
+        return;
+    }
+
+    m_boundDevice->stopRecording();
+}
+
+void VideoForm::handleRecordingStateChanged(const QString &serial, bool active, const QString &filePath)
+{
+    if (serial != m_serial) {
+        return;
+    }
+
+    m_recordingActive = active;
+    m_recordingFilePath = active ? filePath : QString();
+    refreshToolFormRecordingState();
+}
+
+void VideoForm::handleRecordingError(const QString &serial, const QString &message)
+{
+    if (serial != m_serial || message.trimmed().isEmpty()) {
+        return;
+    }
+
+    m_recordingActive = false;
+    m_recordingFilePath.clear();
+    refreshToolFormRecordingState();
+    QMessageBox::warning(this, tr("录制屏幕"), message);
+}
+
 void VideoForm::showToolForm(bool show)
 {
     if (!m_toolForm) {
@@ -653,6 +751,13 @@ void VideoForm::showToolForm(bool show)
         connect(m_toolForm, &ToolForm::restartServiceRequested, this, [this]() {
             emit restartServiceRequested(m_serial);
         });
+        connect(m_toolForm, &ToolForm::startRecordingRequested, this, [this]() {
+            startRecordingFromToolForm();
+        });
+        connect(m_toolForm, &ToolForm::stopRecordingRequested, this, [this]() {
+            stopRecordingFromToolForm();
+        });
+        refreshToolFormRecordingState();
     }
     m_toolForm->move(pos().x() + geometry().width(), pos().y() + 30);
     m_toolForm->setVisible(show && !isKeymapEditorActive());

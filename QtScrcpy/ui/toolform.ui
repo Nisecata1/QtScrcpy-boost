@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>63</width>
-    <height>537</height>
+    <height>611</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -40,18 +40,38 @@
      </property>
     </widget>
    </item>
-   <item>
-    <widget class="QPushButton" name="restartServiceBtn">
-     <property name="toolTip">
-      <string>restart service</string>
-     </property>
+    <item>
+     <widget class="QPushButton" name="restartServiceBtn">
+      <property name="toolTip">
+       <string>restart service</string>
+      </property>
      <property name="text">
       <string/>
-     </property>
-    </widget>
-   </item>
-   <item>
-    <spacer name="verticalSpacer">
+      </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QPushButton" name="startRecordBtn">
+      <property name="toolTip">
+       <string>start record</string>
+      </property>
+      <property name="text">
+       <string/>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QPushButton" name="stopRecordBtn">
+      <property name="toolTip">
+       <string>stop record</string>
+      </property>
+      <property name="text">
+       <string/>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <spacer name="verticalSpacer">
      <property name="orientation">
       <enum>Qt::Vertical</enum>
      </property>

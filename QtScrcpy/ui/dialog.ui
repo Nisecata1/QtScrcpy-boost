@@ -814,7 +814,7 @@
                </sizepolicy>
               </property>
               <property name="text">
-               <string>record screen</string>
+               <string>连接时自动录制</string>
               </property>
              </widget>
             </item>

@@ -47,6 +47,18 @@ QString nodeTypeLabel(KeymapEditorDocument::NodeType type)
         return QStringLiteral("Unknown");
     }
 }
+
+QString bindingDisplayToolTip(const QString &bindingName)
+{
+    return QObject::tr("%1显示当前已绑定的按键或鼠标键，不能直接输入；请使用右侧“Record”重新录制。").arg(bindingName);
+}
+
+QString recordButtonToolTip(const QString &bindingName, bool listening)
+{
+    return listening
+        ? QObject::tr("正在监听%1输入。按下任意键或鼠标键即可写入；按 Ctrl+E 可取消并关闭编辑器。").arg(bindingName)
+        : QObject::tr("开始录制%1。点击后会进入监听状态，等待下一次按键或鼠标输入。").arg(bindingName);
+}
 }
 
 KeymapEditorPanel::KeymapEditorPanel(QWidget *parent)
@@ -69,6 +81,7 @@ KeymapEditorPanel::KeymapEditorPanel(QWidget *parent)
     rootLayout->addWidget(m_titleLabel);
 
     m_nodeList = new QListWidget(this);
+    m_nodeList->setToolTip(tr("显示当前脚本里的所有节点。点击列表项可切换右侧属性编辑对象。"));
     rootLayout->addWidget(m_nodeList, 1);
 
     QHBoxLayout *addLayout = new QHBoxLayout();
@@ -78,12 +91,15 @@ KeymapEditorPanel::KeymapEditorPanel(QWidget *parent)
     m_addTypeBox->addItem(nodeTypeLabel(KeymapEditorDocument::NodeSteerWheel), KeymapEditorDocument::NodeSteerWheel);
     m_addTypeBox->addItem(nodeTypeLabel(KeymapEditorDocument::NodeAndroidKey), KeymapEditorDocument::NodeAndroidKey);
     m_addTypeBox->addItem(nodeTypeLabel(KeymapEditorDocument::NodeMouseMove), KeymapEditorDocument::NodeMouseMove);
+    m_addTypeBox->setToolTip(tr("选择要新增的节点类型。新增节点会出现在画面中心附近。"));
     m_addNodeBtn = new QPushButton(QStringLiteral("Add"), this);
+    m_addNodeBtn->setToolTip(tr("按左侧类型新增一个节点，并自动选中新节点。"));
     addLayout->addWidget(m_addTypeBox, 1);
     addLayout->addWidget(m_addNodeBtn);
     rootLayout->addLayout(addLayout);
 
     m_deleteNodeBtn = new QPushButton(QStringLiteral("Delete Node"), this);
+    m_deleteNodeBtn->setToolTip(tr("删除当前选中的节点。只读节点或不可删除节点不会允许执行。"));
     rootLayout->addWidget(m_deleteNodeBtn);
 
     QFrame *separator = new QFrame(this);
@@ -96,12 +112,15 @@ KeymapEditorPanel::KeymapEditorPanel(QWidget *parent)
     formLayout->setFormAlignment(Qt::AlignTop);
 
     m_commentEdit = new QLineEdit(this);
+    m_commentEdit->setToolTip(tr("编辑当前节点的备注说明。只在该节点支持注释且不是只读时可修改。"));
     formLayout->addRow(QStringLiteral("Comment"), m_commentEdit);
 
     m_alwaysActiveCheck = new QCheckBox(QStringLiteral("Always Active"), this);
+    m_alwaysActiveCheck->setToolTip(tr("让当前节点始终保持激活，不受常规切换状态影响。只有支持该属性的节点才会显示。"));
     formLayout->addRow(QString(), m_alwaysActiveCheck);
 
     m_switchMapCheck = new QCheckBox(QStringLiteral("Switch Map"), this);
+    m_switchMapCheck->setToolTip(tr("把当前节点作为切换映射用的开关。只有支持该属性的节点才会显示。"));
     formLayout->addRow(QString(), m_switchMapCheck);
 
     auto makeRecordRow = [this](QLineEdit *&edit, QPushButton *&button, const QString &buttonText) -> QWidget * {
@@ -122,9 +141,20 @@ KeymapEditorPanel::KeymapEditorPanel(QWidget *parent)
     formLayout->addRow(QStringLiteral("Right Key"), makeRecordRow(m_rightKeyEdit, m_rightRecordBtn, QStringLiteral("Record")));
     formLayout->addRow(QStringLiteral("Up Key"), makeRecordRow(m_upKeyEdit, m_upRecordBtn, QStringLiteral("Record")));
     formLayout->addRow(QStringLiteral("Down Key"), makeRecordRow(m_downKeyEdit, m_downRecordBtn, QStringLiteral("Record")));
+    m_primaryKeyEdit->setToolTip(bindingDisplayToolTip(tr("主键位")));
+    m_leftKeyEdit->setToolTip(bindingDisplayToolTip(tr("左方向键位")));
+    m_rightKeyEdit->setToolTip(bindingDisplayToolTip(tr("右方向键位")));
+    m_upKeyEdit->setToolTip(bindingDisplayToolTip(tr("上方向键位")));
+    m_downKeyEdit->setToolTip(bindingDisplayToolTip(tr("下方向键位")));
+    m_primaryRecordBtn->setToolTip(recordButtonToolTip(tr("主键位"), false));
+    m_leftRecordBtn->setToolTip(recordButtonToolTip(tr("左方向键位"), false));
+    m_rightRecordBtn->setToolTip(recordButtonToolTip(tr("右方向键位"), false));
+    m_upRecordBtn->setToolTip(recordButtonToolTip(tr("上方向键位"), false));
+    m_downRecordBtn->setToolTip(recordButtonToolTip(tr("下方向键位"), false));
 
     m_androidKeySpin = new QSpinBox(this);
     m_androidKeySpin->setRange(0, 500);
+    m_androidKeySpin->setToolTip(tr("设置当前节点要发送的 Android KeyCode 数值。只有 Android Key 节点才会显示。"));
     formLayout->addRow(QStringLiteral("Android Key"), m_androidKeySpin);
 
     m_primaryPosLabel = new QLabel(this);
@@ -143,6 +173,8 @@ KeymapEditorPanel::KeymapEditorPanel(QWidget *parent)
     QHBoxLayout *bottomLayout = new QHBoxLayout();
     m_saveBtn = new QPushButton(QStringLiteral("Save && Apply"), this);
     m_discardBtn = new QPushButton(QStringLiteral("Discard"), this);
+    m_saveBtn->setToolTip(tr("保存当前脚本修改并立即重新应用到当前视频窗口。"));
+    m_discardBtn->setToolTip(tr("放弃尚未保存的修改，恢复到上次已应用的脚本内容。"));
     bottomLayout->addWidget(m_saveBtn, 1);
     bottomLayout->addWidget(m_discardBtn, 1);
     rootLayout->addLayout(bottomLayout);
@@ -549,11 +581,23 @@ void KeymapEditorPanel::applyRecordedJsonKey(const QString &jsonKey)
 void KeymapEditorPanel::updateRecordingButtons()
 {
     const QString idleText = QStringLiteral("Record");
-    m_primaryRecordBtn->setText(m_recordingActive && m_recordingField == KeymapEditorDocument::BindingPrimary ? QStringLiteral("Listening...") : idleText);
-    m_leftRecordBtn->setText(m_recordingActive && m_recordingField == KeymapEditorDocument::BindingSteerLeft ? QStringLiteral("Listening...") : idleText);
-    m_rightRecordBtn->setText(m_recordingActive && m_recordingField == KeymapEditorDocument::BindingSteerRight ? QStringLiteral("Listening...") : idleText);
-    m_upRecordBtn->setText(m_recordingActive && m_recordingField == KeymapEditorDocument::BindingSteerUp ? QStringLiteral("Listening...") : idleText);
-    m_downRecordBtn->setText(m_recordingActive && m_recordingField == KeymapEditorDocument::BindingSteerDown ? QStringLiteral("Listening...") : idleText);
+    const bool primaryListening = m_recordingActive && m_recordingField == KeymapEditorDocument::BindingPrimary;
+    const bool leftListening = m_recordingActive && m_recordingField == KeymapEditorDocument::BindingSteerLeft;
+    const bool rightListening = m_recordingActive && m_recordingField == KeymapEditorDocument::BindingSteerRight;
+    const bool upListening = m_recordingActive && m_recordingField == KeymapEditorDocument::BindingSteerUp;
+    const bool downListening = m_recordingActive && m_recordingField == KeymapEditorDocument::BindingSteerDown;
+
+    m_primaryRecordBtn->setText(primaryListening ? QStringLiteral("Listening...") : idleText);
+    m_leftRecordBtn->setText(leftListening ? QStringLiteral("Listening...") : idleText);
+    m_rightRecordBtn->setText(rightListening ? QStringLiteral("Listening...") : idleText);
+    m_upRecordBtn->setText(upListening ? QStringLiteral("Listening...") : idleText);
+    m_downRecordBtn->setText(downListening ? QStringLiteral("Listening...") : idleText);
+
+    m_primaryRecordBtn->setToolTip(recordButtonToolTip(tr("主键位"), primaryListening));
+    m_leftRecordBtn->setToolTip(recordButtonToolTip(tr("左方向键位"), leftListening));
+    m_rightRecordBtn->setToolTip(recordButtonToolTip(tr("右方向键位"), rightListening));
+    m_upRecordBtn->setToolTip(recordButtonToolTip(tr("上方向键位"), upListening));
+    m_downRecordBtn->setToolTip(recordButtonToolTip(tr("下方向键位"), downListening));
 }
 
 QString KeymapEditorPanel::formatPointLabel(const QPointF &point) const

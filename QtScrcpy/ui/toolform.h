@@ -22,10 +22,13 @@ public:
     ~ToolForm();
 
     void setSerial(const QString& serial);
+    void setRecordingState(bool active, const QString &filePath = QString());
     bool isHost();
 
 signals:
     void restartServiceRequested();
+    void startRecordingRequested();
+    void stopRecordingRequested();
 
 protected:
     void mousePressEvent(QMouseEvent *event);
@@ -52,10 +55,13 @@ private slots:
     void on_openScreenBtn_clicked();
     void on_clipboardBtn_clicked();
     void on_restartServiceBtn_clicked();
+    void on_startRecordBtn_clicked();
+    void on_stopRecordBtn_clicked();
 
 private:
     void initStyle();
     void updateGroupControl();
+    void updateToolTips();
 
 private:
     Ui::ToolForm *ui;
@@ -63,6 +69,8 @@ private:
     QString m_serial;
     bool m_showTouch = false;
     bool m_isHost = false;
+    bool m_recordingActive = false;
+    QString m_recordingFilePath;
 };
 
 #endif // TOOLFORM_H

@@ -46,11 +46,19 @@ set(CMAKE_INCLUDE_CURRENT_DIR ON)
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# default RelWithDebInfo
-if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE RelWithDebInfo)
+# default Release for single-config generators
+get_property(QC_IS_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+message(STATUS "[${PROJECT_NAME}] MULTI_CONFIG:${QC_IS_MULTI_CONFIG}")
+
+if(NOT QC_IS_MULTI_CONFIG AND NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
-message(STATUS "[${PROJECT_NAME}] BUILD_TYPE:${CMAKE_BUILD_TYPE}")
+
+if(QC_IS_MULTI_CONFIG)
+    message(STATUS "[${PROJECT_NAME}] BUILD_TYPE:multi-config")
+else()
+    message(STATUS "[${PROJECT_NAME}] BUILD_TYPE:${CMAKE_BUILD_TYPE}")
+endif()
 
 # Log configuration
 option(ENABLE_DETAILED_LOGS "Enable detailed log output with file and line info" OFF)
@@ -310,16 +318,38 @@ target_include_directories(${PROJECT_NAME} PRIVATE QtScrcpyCore/src/device/andro
 
 # output dir
 # https://cmake.org/cmake/help/latest/prop_gbl/GENERATOR_IS_MULTI_CONFIG.html
-get_property(QC_IS_MUTIL_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
-message(STATUS "multi config:" QC_IS_MUTIL_CONFIG)
+set(QSC_OUTPUT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../output/${QC_CPU_ARCH}")
 
 # $<0:> 使用生成器表达式为每个config设置RUNTIME_OUTPUT_DIRECTORY，这样multi config就不会自动追加CMAKE_BUILD_TYPE子目录了
 # 1. multi config介绍 https://cmake.org/cmake/help/latest/prop_gbl/GENERATOR_IS_MULTI_CONFIG.html
 # 2. multi config在不用表达式生成器时自动追加子目录说明 https://cmake.org/cmake/help/latest/prop_tgt/RUNTIME_OUTPUT_DIRECTORY.html
 # 3. 使用表达式生成器禁止multi config自动追加子目录解决方案 https://stackoverflow.com/questions/7747857/in-cmake-how-do-i-work-around-the-debug-and-release-directories-visual-studio-2
-set_target_properties(${PROJECT_NAME} PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../output/${QC_CPU_ARCH}/${CMAKE_BUILD_TYPE}/$<0:>"
-)
+if(QC_IS_MULTI_CONFIG)
+    foreach(config Debug Release MinSizeRel RelWithDebInfo)
+        string(TOUPPER "${config}" config_upper)
+        set_target_properties(${PROJECT_NAME} PROPERTIES
+            "RUNTIME_OUTPUT_DIRECTORY_${config_upper}" "${QSC_OUTPUT_ROOT}/${config}"
+        )
+    endforeach()
+else()
+    set_target_properties(${PROJECT_NAME} PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${QSC_OUTPUT_ROOT}/${CMAKE_BUILD_TYPE}"
+    )
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    if(QC_IS_MULTI_CONFIG)
+        set(QSC_DEPLOY_PATH "${QSC_OUTPUT_ROOT}/$<CONFIG>/${PROJECT_NAME}.app/Contents/MacOS")
+    else()
+        set(QSC_DEPLOY_PATH "${QSC_OUTPUT_ROOT}/${CMAKE_BUILD_TYPE}/${PROJECT_NAME}.app/Contents/MacOS")
+    endif()
+else()
+    if(QC_IS_MULTI_CONFIG)
+        set(QSC_DEPLOY_PATH "${QSC_OUTPUT_ROOT}/$<CONFIG>")
+    else()
+        set(QSC_DEPLOY_PATH "${QSC_OUTPUT_ROOT}/${CMAKE_BUILD_TYPE}")
+    endif()
+endif()
 
 #
 # plantform deps
@@ -327,13 +357,46 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
 
 # windows
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
-    get_target_property(QSC_BIN_OUTPUT_PATH ${PROJECT_NAME} RUNTIME_OUTPUT_DIRECTORY)
-    set(QSC_DEPLOY_PATH ${QSC_BIN_OUTPUT_PATH})
+    set(QSC_QT_CORE_DLL "")
+    foreach(qt_core_prop IMPORTED_LOCATION_RELEASE IMPORTED_LOCATION_RELWITHDEBINFO IMPORTED_LOCATION_MINSIZEREL IMPORTED_LOCATION_DEBUG IMPORTED_LOCATION)
+        if(NOT QSC_QT_CORE_DLL)
+            get_target_property(QSC_QT_CORE_DLL Qt${QT_DESIRED_VERSION}::Core ${qt_core_prop})
+        endif()
+    endforeach()
+
+    if(QSC_QT_CORE_DLL)
+        get_filename_component(QSC_QT_BIN_DIR "${QSC_QT_CORE_DLL}" DIRECTORY)
+        find_program(QSC_WINDEPLOYQT_EXECUTABLE
+            NAMES windeployqt windeployqt.exe
+            HINTS "${QSC_QT_BIN_DIR}"
+            NO_DEFAULT_PATH
+        )
+    endif()
+
+    if(NOT QSC_WINDEPLOYQT_EXECUTABLE)
+        find_program(QSC_WINDEPLOYQT_EXECUTABLE NAMES windeployqt windeployqt.exe)
+    endif()
 
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/sndcpy/sndcpy.bat" "${QSC_BIN_OUTPUT_PATH}"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/sndcpy/sndcpy.apk" "${QSC_BIN_OUTPUT_PATH}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${QSC_DEPLOY_PATH}/config"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/../config" "${QSC_DEPLOY_PATH}/config"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/sndcpy/sndcpy.bat" "${QSC_DEPLOY_PATH}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/sndcpy/sndcpy.apk" "${QSC_DEPLOY_PATH}"
     )
+
+    if(QSC_WINDEPLOYQT_EXECUTABLE)
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND}
+                -DQSC_TARGET_FILE=$<TARGET_FILE:${PROJECT_NAME}>
+                -DQSC_DEPLOY_DIR=${QSC_DEPLOY_PATH}
+                -DQSC_DEPLOY_CONFIG=$<CONFIG>
+                -DQSC_WINDEPLOYQT_EXECUTABLE=${QSC_WINDEPLOYQT_EXECUTABLE}
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/deploy_qt_runtime_if_needed.cmake"
+            VERBATIM
+        )
+    else()
+        message(WARNING "[${PROJECT_NAME}] windeployqt was not found. Windows build output will not be self-contained.")
+    endif()
 endif()
 
 # MacOS
@@ -341,17 +404,11 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     # qt6 need 10.15 or later
     set(CMAKE_OSX_DEPLOYMENT_TARGET "10.15")
 
-    # copy bundle file
-    get_target_property(MACOS_BUNDLE_PATH ${PROJECT_NAME} RUNTIME_OUTPUT_DIRECTORY)
-    set(MACOS_BUNDLE_PATH ${MACOS_BUNDLE_PATH}/${PROJECT_NAME}.app/Contents)
-
-    set(QSC_DEPLOY_PATH ${MACOS_BUNDLE_PATH})
-
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-        # config file copy to Contents/MacOS/config
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/../config/config.ini" "${MACOS_BUNDLE_PATH}/MacOS/config/config.ini"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/sndcpy/sndcpy.sh" "${MACOS_BUNDLE_PATH}/MacOS"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/sndcpy/sndcpy.apk" "${MACOS_BUNDLE_PATH}/MacOS"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${QSC_DEPLOY_PATH}/config"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/../config" "${QSC_DEPLOY_PATH}/config"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/sndcpy/sndcpy.sh" "${QSC_DEPLOY_PATH}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/sndcpy/sndcpy.apk" "${QSC_DEPLOY_PATH}"
     )
 
     # Step 2. ues MACOSX_PACKAGE_LOCATION copy icns to Resources
@@ -378,12 +435,11 @@ endif()
 
 # Linux
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    get_target_property(QSC_BIN_OUTPUT_PATH ${PROJECT_NAME} RUNTIME_OUTPUT_DIRECTORY)
-    set(QSC_DEPLOY_PATH ${QSC_BIN_OUTPUT_PATH})
-
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/sndcpy/sndcpy.sh" "${QSC_BIN_OUTPUT_PATH}"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/sndcpy/sndcpy.apk" "${QSC_BIN_OUTPUT_PATH}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${QSC_DEPLOY_PATH}/config"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/../config" "${QSC_DEPLOY_PATH}/config"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/sndcpy/sndcpy.sh" "${QSC_DEPLOY_PATH}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/sndcpy/sndcpy.apk" "${QSC_DEPLOY_PATH}"
     )
 
     set(THREADS_PREFER_PTHREAD_FLAG ON)

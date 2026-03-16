@@ -35,6 +35,20 @@
 
 QString s_keyMapPath = "";
 
+namespace {
+void setComboAndLineEditToolTip(QComboBox *comboBox, const QString &toolTip)
+{
+    if (!comboBox) {
+        return;
+    }
+
+    comboBox->setToolTip(toolTip);
+    if (comboBox->lineEdit()) {
+        comboBox->lineEdit()->setToolTip(toolTip);
+    }
+}
+}
+
 const QString &getKeyMapPath()
 {
     if (s_keyMapPath.isEmpty()) {
@@ -53,6 +67,7 @@ Dialog::Dialog(QWidget *parent) : QWidget(parent), ui(new Ui::Widget)
     initUI();
 
     updateBootConfig(true);
+    refreshControlToolTips();
 
     on_useSingleModeCheck_clicked();
     on_updateDevice_clicked();
@@ -302,7 +317,9 @@ void Dialog::initUI()
     });
 
     initSelectedDeviceConfigUi();
+    initControlToolTips();
     handleSelectedSerialChanged(currentSelectedSerial());
+    refreshControlToolTips();
 }
 
 void Dialog::initSelectedDeviceConfigUi()
@@ -454,6 +471,143 @@ void Dialog::initSelectedDeviceConfigUi()
     rightLayout->insertWidget(1, m_selectedDeviceConfigGroup);
 }
 
+void Dialog::initControlToolTips()
+{
+    const QString themeToolTip = tr("切换整个应用的主题外观，可选择跟随系统、浅色或深色。");
+    const QString bitRateValueToolTip = tr("设置视频码率数值。最终码率会和右侧单位组合计算；数值越大画质越高，但带宽和性能占用也越大。");
+    const QString bitRateUnitToolTip = tr("选择码率单位。最终码率 = 左侧数值 x 当前单位。");
+    const QString maxSizeToolTip = tr("限制视频长边分辨率。值越小越省带宽；original 表示保持设备原始尺寸。");
+    const QString maxFpsToolTip = tr("设置全局最大帧率。0 表示不限制；修改后对新启动或重启后的服务生效。");
+    const QString formatToolTip = tr("选择录屏文件格式，仅在开启录屏时生效。");
+    const QString orientationToolTip = tr("锁定采集方向。选择具体角度后会强制按该方向采集画面。");
+    const QString localTextInputToolTip = tr("启用视频窗口里的本地文本输入浮层。开启后可用右侧快捷键呼出输入框，一次性把文字发送到设备。");
+    const QString gameScriptToolTip = tr("选择要绑定到当前设备的视频窗口脚本。点击“应用脚本”后会立即下发到已连接设备。");
+    const QString recordScreenToolTip = tr("连接设备时自动开始录制。只影响新启动的会话；运行中的开始和停止请使用视频窗口旁的录制按钮。");
+    const QString deviceCenterCropToolTip = tr("为当前设备启用独有的中心裁切参数。开启后只对当前选中设备生效。");
+    const QString deviceCenterCropSizeToolTip = tr("设置当前设备中心裁切尺寸，只有开启中心裁切后才会生效。");
+    const QString deviceMaxFpsToolTip = tr("为当前设备设置独有最大帧率。0 表示不限制；重启服务后生效。");
+    const QString deviceMaxFpsOverrideToolTip = tr("启用当前设备的独有最大帧率覆盖。开启后会覆盖全局最大帧率设置。");
+
+    ui->useSingleModeCheck->setToolTip(tr("切换为快捷连接模式。开启后会隐藏右侧高级配置，只保留左侧快速连接入口。"));
+    ui->wifiConnectBtn->setToolTip(tr("按预设流程尝试无线连接：刷新设备、读取 IP、切换 adbd 到 tcpip、执行 adb connect，然后启动投屏。设备需要先通过 USB 被 adb 识别。"));
+    ui->usbConnectBtn->setToolTip(tr("按预设流程尝试 USB 直连：停止现有会话、刷新设备列表，并连接第一个 USB 设备。"));
+    ui->autoUpdatecheckBox->setToolTip(tr("每 5 秒自动执行一次 adb devices 刷新设备列表。开启后会持续占用一轮 adb 轮询。"));
+    ui->connectedPhoneList->setToolTip(tr("显示当前 adb 识别到的设备。双击某一项会选中该设备并直接启动投屏服务。"));
+    ui->adbCommandEdt->setToolTip(tr("输入要执行的 adb 子命令，不需要包含 adb 本体。执行结果会追加到下方日志。"));
+    ui->adbCommandBtn->setToolTip(tr("执行上方 adb 命令。命令运行期间，新的 adb 操作会被阻塞。"));
+    ui->stopAdbBtn->setToolTip(tr("强制停止当前正在运行的 adb 命令。"));
+    ui->clearOut->setToolTip(tr("清空下方日志输出区域。"));
+    ui->bitRateEdit->setToolTip(bitRateValueToolTip);
+    ui->bitRateBox->setToolTip(bitRateUnitToolTip);
+    ui->maxSizeBox->setToolTip(maxSizeToolTip);
+    ui->maxFpsSpin->setToolTip(maxFpsToolTip);
+    ui->formatBox->setToolTip(formatToolTip);
+    ui->lockOrientationBox->setToolTip(orientationToolTip);
+    ui->selectRecordPathBtn->setToolTip(tr("选择录屏保存目录。未设置目录时无法开启录屏。"));
+    ui->localTextInputCheck->setToolTip(localTextInputToolTip);
+    ui->openAppFolderBtn->setToolTip(tr("打开当前 QtScrcpy 可执行文件所在目录。"));
+    ui->gameBox->setToolTip(gameScriptToolTip);
+    ui->refreshGameScriptBtn->setToolTip(tr("重新扫描 keymap 目录里的脚本文件并刷新列表。"));
+    ui->applyScriptBtn->setToolTip(tr("将当前选中的脚本立即应用到已连接设备和已打开的视频窗口。"));
+    ui->fpsCheck->setToolTip(tr("在视频窗口显示实时帧率信息。只影响窗口显示，不改变采集帧率。"));
+    ui->notDisplayCheck->setToolTip(tr("连接后不显示设备画面，只保留后台会话。通常配合录屏使用；未设置录屏目录时不会允许勾选。"));
+    ui->alwaysTopCheck->setToolTip(tr("让视频窗口保持置顶。只影响新打开或当前已打开的视频窗口。"));
+    ui->recordScreenCheck->setToolTip(recordScreenToolTip);
+    ui->useReverseCheck->setToolTip(tr("使用 reverse 方式建立设备与电脑之间的投屏通道。某些环境更稳，但依赖设备端 adb 能力。"));
+    ui->closeScreenCheck->setToolTip(tr("连接成功后尝试关闭设备屏幕显示。只会熄屏，不会断开会话。"));
+    ui->framelessCheck->setToolTip(tr("让视频窗口使用无边框样式显示。"));
+    ui->stayAwakeCheck->setToolTip(tr("连接期间请求设备保持唤醒，减少自动息屏导致的操作中断。"));
+    ui->showToolbar->setToolTip(tr("在视频窗口旁显示悬浮工具栏。关闭后仍可通过主窗口继续操作设备。"));
+    ui->userNameEdt->setToolTip(tr("给当前选中的设备设置本地备注名，只保存在本机配置里。"));
+    ui->updateNameBtn->setToolTip(tr("保存上方备注名并刷新设备列表显示。留空时会恢复默认名称 Phone。"));
+    ui->serialBox->setToolTip(tr("选择要操作或连接的设备序列号。右侧的大部分设备操作都会作用到当前选中设备。"));
+    ui->startServerBtn->setToolTip(tr("按当前配置启动所选设备的投屏服务，并打开视频窗口。"));
+    ui->stopServerBtn->setToolTip(tr("断开当前选中设备的投屏会话，并关闭对应视频窗口。"));
+    ui->restartServerBtn->setToolTip(tr("重启当前选中设备的投屏服务。会先断开，再按当前配置重新连接。"));
+    ui->stopAllServerBtn->setToolTip(tr("断开所有已连接设备的投屏会话。"));
+    ui->updateDevice->setToolTip(tr("执行 adb devices 刷新设备列表。"));
+    ui->getIPBtn->setToolTip(tr("从当前 USB 连接设备读取 WLAN IP 地址，并填入无线连接区域。设备未连入 Wi-Fi 时可能取不到。"));
+    ui->startAdbdBtn->setToolTip(tr("在当前设备上执行 adb tcpip 5555，把 adbd 切到无线调试端口。通常需要设备先通过 USB 连接。"));
+    ui->installSndcpyBtn->setToolTip(tr("仅向当前设备安装或准备 sndcpy 音频组件，不会开始播放。"));
+    ui->startAudioBtn->setToolTip(tr("启动当前设备的音频转发播放。需要设备已连接，且 sndcpy 组件可用。"));
+    ui->stopAudioBtn->setToolTip(tr("停止当前音频转发播放。"));
+    ui->wirelessConnectBtn->setToolTip(tr("对上方 IP 和端口执行 adb connect。成功后会记录历史；不会自动启动投屏，除非使用左侧快捷连接流程。"));
+    ui->wirelessDisConnectBtn->setToolTip(tr("对上方 IP 执行 adb disconnect，断开无线 adb 连接。"));
+
+    if (m_themeModeBox) {
+        m_themeModeBox->setToolTip(themeToolTip);
+    }
+
+    if (m_deviceCenterCropCheck) {
+        m_deviceCenterCropCheck->setToolTip(deviceCenterCropToolTip);
+    }
+    if (m_deviceCenterCropSizeSpin) {
+        m_deviceCenterCropSizeSpin->setToolTip(deviceCenterCropSizeToolTip);
+    }
+    if (m_deviceMaxFpsSpin) {
+        m_deviceMaxFpsSpin->setToolTip(deviceMaxFpsToolTip);
+    }
+    if (m_deviceMaxFpsOverrideCheck) {
+        m_deviceMaxFpsOverrideCheck->setToolTip(deviceMaxFpsOverrideToolTip);
+    }
+    if (m_mouseConfigToggleBtn) {
+        m_mouseConfigToggleBtn->setToolTip(buildMouseConfigToggleToolTip());
+    }
+}
+
+void Dialog::refreshControlToolTips()
+{
+    ui->recordPathEdt->setToolTip(buildRecordPathToolTip());
+    ui->localTextInputShortcutEdit->setToolTip(buildLocalTextInputShortcutToolTip());
+    setComboAndLineEditToolTip(ui->deviceIpEdt, buildDeviceIpToolTip());
+    setComboAndLineEditToolTip(ui->devicePortEdt, buildDevicePortToolTip());
+
+    if (m_mouseConfigToggleBtn) {
+        m_mouseConfigToggleBtn->setToolTip(buildMouseConfigToggleToolTip());
+    }
+}
+
+QString Dialog::buildRecordPathToolTip() const
+{
+    const QString path = ui->recordPathEdt->text().trimmed();
+    QString toolTip = tr("设置录屏保存目录。连接时自动录制和视频窗口工具栏里的开始录制都会复用这里的路径。");
+    toolTip += path.isEmpty()
+        ? tr("\n当前路径：未设置。")
+        : tr("\n当前路径：%1").arg(path);
+    return toolTip;
+}
+
+QString Dialog::buildLocalTextInputShortcutToolTip() const
+{
+    const QString shortcut = ui->localTextInputShortcutEdit->keySequence().toString(QKeySequence::NativeText).trimmed();
+    QString toolTip = tr("设置视频窗口里呼出本地文本输入浮层的快捷键。只有启用本地文本输入后才会生效。");
+    toolTip += shortcut.isEmpty()
+        ? tr("\n当前快捷键：未设置。")
+        : tr("\n当前快捷键：%1。").arg(shortcut);
+    if (!ui->localTextInputCheck->isChecked()) {
+        toolTip += tr("\n当前状态：本地文本输入未启用。");
+    }
+    return toolTip;
+}
+
+QString Dialog::buildDeviceIpToolTip() const
+{
+    return tr("输入或选择目标设备的 IP 地址。成功连接后会自动记录历史；右键输入框可清空历史记录。");
+}
+
+QString Dialog::buildDevicePortToolTip() const
+{
+    return tr("输入或选择目标设备端口。留空时会使用默认端口 5555；成功连接后会自动记录历史，右键输入框可清空历史记录。");
+}
+
+QString Dialog::buildMouseConfigToggleToolTip() const
+{
+    const bool expanded = m_mouseConfigToggleBtn && m_mouseConfigToggleBtn->isChecked();
+    return expanded
+        ? tr("收起当前设备的鼠标显示兼容参数。\n当前状态：已展开。")
+        : tr("展开当前设备的鼠标显示兼容参数。\n当前状态：已收起。");
+}
+
 QString Dialog::currentSelectedSerial() const
 {
     if (!ui || !ui->serialBox) {
@@ -499,6 +653,7 @@ void Dialog::setMouseConfigExpanded(bool expanded)
 
     m_mouseConfigToggleBtn->setArrowType(expanded ? Qt::DownArrow : Qt::RightArrow);
     m_mouseConfigContent->setVisible(expanded);
+    refreshControlToolTips();
 }
 
 void Dialog::updateSelectedDeviceConfigControlState()
@@ -1072,8 +1227,33 @@ void Dialog::onDeviceConnected(bool success, const QString &serial, const QStrin
     m_videoForms.insert(serial, videoForm);
     updateVideoFormScriptBinding(serial, getGameScriptPath(ui->gameBox->currentText()), ui->gameBox->currentText(), getGameScript(ui->gameBox->currentText()));
 
-    qsc::IDeviceManage::getInstance().getDevice(serial)->setUserData(static_cast<void*>(videoForm));
-    qsc::IDeviceManage::getInstance().getDevice(serial)->registerDeviceObserver(videoForm);
+    auto device = qsc::IDeviceManage::getInstance().getDevice(serial);
+    if (!device) {
+        videoForm->deleteLater();
+        return;
+    }
+
+    connect(device.data(), &qsc::IDevice::recordingError, this,
+            [this, serial](const QString &emittedSerial, const QString &message) {
+        if (emittedSerial != serial || message.trimmed().isEmpty()) {
+            return;
+        }
+        outLog(QString("recording error (%1): %2").arg(serial, message));
+    });
+    connect(device.data(), &qsc::IDevice::recordingStateChanged, this,
+            [this, serial](const QString &emittedSerial, bool active, const QString &filePath) {
+        if (emittedSerial != serial) {
+            return;
+        }
+        if (active) {
+            outLog(QString("recording started (%1): %2").arg(serial, filePath));
+        } else {
+            outLog(QString("recording stopped (%1)").arg(serial));
+        }
+    });
+
+    device->setUserData(static_cast<void*>(videoForm));
+    device->registerDeviceObserver(videoForm);
 
 
     videoForm->showFPS(ui->fpsCheck->isChecked());
@@ -1190,7 +1370,7 @@ void Dialog::on_openAppFolderBtn_clicked()
 
 void Dialog::on_recordPathEdt_textChanged(const QString &arg1)
 {
-    ui->recordPathEdt->setToolTip(arg1.trimmed());
+    refreshControlToolTips();
     ui->notDisplayCheck->setCheckable(!arg1.trimmed().isEmpty());
 }
 
@@ -1261,12 +1441,14 @@ void Dialog::on_recordScreenCheck_clicked(bool checked)
 void Dialog::on_localTextInputCheck_toggled(bool checked)
 {
     ui->localTextInputShortcutEdit->setEnabled(checked);
+    refreshControlToolTips();
     applyLocalTextInputConfigToOpenVideoForms();
 }
 
 void Dialog::on_localTextInputShortcutEdit_keySequenceChanged(const QKeySequence &keySequence)
 {
     Q_UNUSED(keySequence);
+    refreshControlToolTips();
     applyLocalTextInputConfigToOpenVideoForms();
 }
 

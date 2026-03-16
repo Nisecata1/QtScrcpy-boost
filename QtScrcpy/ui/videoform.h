@@ -109,6 +109,13 @@ private:
     bool saveAndApplyKeymapEditor();
     void updateKeymapEditorShortcutStates();
     bool isKeymapEditorActive() const;
+    void bindDeviceRecordingState();
+    void refreshToolFormRecordingState();
+    QString currentRecordFormat() const;
+    void startRecordingFromToolForm();
+    void stopRecordingFromToolForm();
+    void handleRecordingStateChanged(const QString &serial, bool active, const QString &filePath);
+    void handleRecordingError(const QString &serial, const QString &message);
 
     void showToolForm(bool show = true);
     void moveCenter();
@@ -164,6 +171,9 @@ private:
     QString m_scriptFilePath;
     QString m_scriptDisplayName;
     QString m_lastAppliedScriptJson;
+    QPointer<qsc::IDevice> m_boundDevice;
+    bool m_recordingActive = false;
+    QString m_recordingFilePath;
 
     //Whether to display the toolbar when connecting a device.
     bool show_toolbar = true;

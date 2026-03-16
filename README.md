@@ -198,8 +198,8 @@ Runtime config directory is resolved in this order:
 
 This means for packaged/portable usage, you should edit:
 
-- `output/x64/RelWithDebInfo/config/config.ini`
-- `output/x64/RelWithDebInfo/config/userdata.ini`
+- `output/x64/Release/config/config.ini`
+- `output/x64/Release/config/userdata.ini`
 
 ### Important behavior rules
 
@@ -421,7 +421,7 @@ All the dependencies are provided and it is easy to compile.
 2. Clone the project with `git clone --recurse-submodules git@github.com:barry-ran/QtScrcpy.git`
 3. For Windows, open CMakeLists.txt with QtCreator and compile Release
 4. For Linux, directly run `./ci/linux/build_for_linux.sh "Release"`
-Note: compiled artifacts are located at `output/x64/Release`
+Note: compiled artifacts are located at `output/x64/Release` by default. If you explicitly build another configuration, artifacts are written to `output/x64/<build-mode>`.
 
 #### Arch Linux Users
 1. Install packages: `base-devel cmake qt5-base qt5-multimedia qt5-x11extras` (`qtcreator` is recommended)

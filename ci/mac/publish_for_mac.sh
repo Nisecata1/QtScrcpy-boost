@@ -1,99 +1,90 @@
+#!/bin/bash
+
 echo
 echo
 echo ---------------------------------------------------------------
 echo check ENV
 echo ---------------------------------------------------------------
+echo ENV_QT_PATH "$ENV_QT_PATH"
 
-# 从环境变量获取必要参数
-# 例如 /Users/barry/Qt5.12.5/5.12.5
-echo ENV_QT_PATH $ENV_QT_PATH
-
-# 获取绝对路径，保证其他目录执行此脚本依然正确
-{
-cd $(dirname "$0")
-script_path=$(pwd)
-cd -
-} &> /dev/null # disable output
-# 设置当前目录，cd的目录影响接下来执行程序的工作目录
+script_path=$(cd "$(dirname "$0")" && pwd)
 old_cd=$(pwd)
-cd $(dirname "$0")
+cd "$script_path"
 
-# 启动参数声明
-publish_dir=$1
-cpu_arch=$2
+usage() {
+    echo "usage: $(basename "$0") <publish_dir> <x64|arm64> <Debug|Release|MinSizeRel|RelWithDebInfo>"
+}
 
-echo
-echo
-echo ---------------------------------------------------------------
-echo check cpu arch[x64/arm64]
-echo ---------------------------------------------------------------
-
-if [[ $cpu_arch != "x64" && $cpu_arch != "arm64" ]]; then
-    echo "error: unkonow cpu mode -- $2"
+if [ -z "$1" ] || [ -z "$2" ] || [ -z "$3" ]; then
+    usage
     exit 1
 fi
 
-# 提示
-echo current cpu mode: $cpu_arch
+publish_dir="$1"
+cpu_arch="$2"
+build_mode="$3"
 
-if [ $cpu_arch == "x64" ]; then
-    qt_clang_path=$ENV_QT_PATH/clang_64
-else
-    qt_clang_path=$ENV_QT_PATH/macos
+if [[ "$cpu_arch" != "x64" && "$cpu_arch" != "arm64" ]]; then
+    echo "error: unknown cpu mode -- $cpu_arch"
+    usage
+    exit 1
 fi
 
-# 提示
-echo current publish dir: $publish_dir
+if [[ "$build_mode" != "Release" && "$build_mode" != "Debug" && "$build_mode" != "MinSizeRel" && "$build_mode" != "RelWithDebInfo" ]]; then
+    echo "error: unknown build mode -- $build_mode"
+    usage
+    exit 1
+fi
 
-# 环境变量设置
-keymap_path=$script_path/../../keymap
-# config_path=$script_path/../../config
+if [ "$cpu_arch" = "x64" ]; then
+    qt_clang_path="$ENV_QT_PATH/clang_64"
+else
+    qt_clang_path="$ENV_QT_PATH/macos"
+fi
 
-publish_path=$script_path/$publish_dir
-release_path=$script_path/../../output/$cpu_arch/RelWithDebInfo
+echo current cpu mode: "$cpu_arch"
+echo current build mode: "$build_mode"
+echo current publish dir: "$publish_dir"
 
-export PATH=$qt_clang_path/bin:$PATH
+keymap_path="$script_path/../../keymap"
+publish_path="$script_path/$publish_dir"
+release_path="$script_path/../../output/$cpu_arch/$build_mode"
+
+if [ ! -d "$release_path" ]; then
+    echo "error: build output not found -- $release_path"
+    cd "$old_cd"
+    exit 1
+fi
+
+export PATH="$qt_clang_path/bin:$PATH"
 
 if [ -d "$publish_path" ]; then
-    rm -rf $publish_path
+    rm -rf "$publish_path"
 fi
 
-# 复制要发布的包
-cp -r $release_path $publish_path
-cp -r $keymap_path $publish_path/QtScrcpy.app/Contents/MacOS
-# cp -r $config_path $publish_path/QtScrcpy.app/Contents/MacOS
+cp -r "$release_path" "$publish_path"
+cp -r "$keymap_path" "$publish_path/QtScrcpy.app/Contents/MacOS"
 
-# 添加qt依赖包
-macdeployqt $publish_path/QtScrcpy.app
+macdeployqt "$publish_path/QtScrcpy.app"
 
-# 删除多余qt依赖包
-
-# PlugIns
-rm -rf $publish_path/QtScrcpy.app/Contents/PlugIns/iconengines
-# 截图功能需要libqjpeg.dylib
-rm -f $publish_path/QtScrcpy.app/Contents/PlugIns/imageformats/libqgif.dylib
-rm -f $publish_path/QtScrcpy.app/Contents/PlugIns/imageformats/libqicns.dylib
-rm -f $publish_path/QtScrcpy.app/Contents/PlugIns/imageformats/libqico.dylib
-# rm -f $publish_path/QtScrcpy.app/Contents/PlugIns/imageformats/libqjpeg.dylib
-rm -f $publish_path/QtScrcpy.app/Contents/PlugIns/imageformats/libqmacheif.dylib
-rm -f $publish_path/QtScrcpy.app/Contents/PlugIns/imageformats/libqmacjp2.dylib
-rm -f $publish_path/QtScrcpy.app/Contents/PlugIns/imageformats/libqtga.dylib
-rm -f $publish_path/QtScrcpy.app/Contents/PlugIns/imageformats/libqtiff.dylib
-rm -f $publish_path/QtScrcpy.app/Contents/PlugIns/imageformats/libqwbmp.dylib
-rm -f $publish_path/QtScrcpy.app/Contents/PlugIns/imageformats/libqwebp.dylib
-rm -rf $publish_path/QtScrcpy.app/Contents/PlugIns/virtualkeyboard
-rm -rf $publish_path/QtScrcpy.app/Contents/PlugIns/printsupport
-rm -rf $publish_path/QtScrcpy.app/Contents/PlugIns/platforminputcontexts
-rm -rf $publish_path/QtScrcpy.app/Contents/PlugIns/iconengines
-rm -rf $publish_path/QtScrcpy.app/Contents/PlugIns/bearer
-
-# Frameworks
-rm -rf $publish_path/QtScrcpy.app/Contents/Frameworks/QtVirtualKeyboard.framework
-rm -rf $publish_path/Contents/Frameworks/QtSvg.framework
-
-# qml
-rm -rf $publish_path/QtScrcpy.app/Contents/Frameworks/QtQml.framework
-rm -rf $publish_path/QtScrcpy.app/Contents/Frameworks/QtQuick.framework
+rm -rf "$publish_path/QtScrcpy.app/Contents/PlugIns/iconengines"
+rm -f "$publish_path/QtScrcpy.app/Contents/PlugIns/imageformats/libqgif.dylib"
+rm -f "$publish_path/QtScrcpy.app/Contents/PlugIns/imageformats/libqicns.dylib"
+rm -f "$publish_path/QtScrcpy.app/Contents/PlugIns/imageformats/libqico.dylib"
+rm -f "$publish_path/QtScrcpy.app/Contents/PlugIns/imageformats/libqmacheif.dylib"
+rm -f "$publish_path/QtScrcpy.app/Contents/PlugIns/imageformats/libqmacjp2.dylib"
+rm -f "$publish_path/QtScrcpy.app/Contents/PlugIns/imageformats/libqtga.dylib"
+rm -f "$publish_path/QtScrcpy.app/Contents/PlugIns/imageformats/libqtiff.dylib"
+rm -f "$publish_path/QtScrcpy.app/Contents/PlugIns/imageformats/libqwbmp.dylib"
+rm -f "$publish_path/QtScrcpy.app/Contents/PlugIns/imageformats/libqwebp.dylib"
+rm -rf "$publish_path/QtScrcpy.app/Contents/PlugIns/virtualkeyboard"
+rm -rf "$publish_path/QtScrcpy.app/Contents/PlugIns/printsupport"
+rm -rf "$publish_path/QtScrcpy.app/Contents/PlugIns/platforminputcontexts"
+rm -rf "$publish_path/QtScrcpy.app/Contents/PlugIns/bearer"
+rm -rf "$publish_path/QtScrcpy.app/Contents/Frameworks/QtVirtualKeyboard.framework"
+rm -rf "$publish_path/Contents/Frameworks/QtSvg.framework"
+rm -rf "$publish_path/QtScrcpy.app/Contents/Frameworks/QtQml.framework"
+rm -rf "$publish_path/QtScrcpy.app/Contents/Frameworks/QtQuick.framework"
 
 echo
 echo
@@ -101,6 +92,5 @@ echo ---------------------------------------------------------------
 echo finish!!!
 echo ---------------------------------------------------------------
 
-# 恢复当前目录
-cd $old_cd
+cd "$old_cd"
 exit 0
