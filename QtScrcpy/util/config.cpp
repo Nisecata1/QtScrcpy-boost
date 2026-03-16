@@ -2,6 +2,7 @@
 #include <QFileInfo>
 #include <QSettings>
 #include <QDebug>
+#include <QtGlobal>
 
 #include "config.h"
 #ifdef Q_OS_OSX
@@ -51,6 +52,9 @@
 #define COMMON_CODEC_NAME_DEF ""
 
 // user config
+#define COMMON_THEME_MODE_KEY "ThemeMode"
+#define COMMON_THEME_MODE_DEF "System"
+
 #define COMMON_RECORD_KEY "RecordPath"
 #define COMMON_RECORD_DEF ""
 
@@ -68,6 +72,12 @@
 
 #define COMMON_VIDEO_CENTER_CROP_SIZE_KEY "VideoCenterCropSize"
 #define COMMON_VIDEO_CENTER_CROP_SIZE_DEF 0
+
+#define COMMON_LOCAL_TEXT_INPUT_ENABLED_KEY "LocalTextInputEnabled"
+#define COMMON_LOCAL_TEXT_INPUT_ENABLED_DEF true
+
+#define COMMON_LOCAL_TEXT_INPUT_SHORTCUT_KEY "LocalTextInputShortcut"
+#define COMMON_LOCAL_TEXT_INPUT_SHORTCUT_DEF "Ctrl+Shift+T"
 
 #define COMMON_RECORD_SCREEN_KEY "RecordScreen"
 #define COMMON_RECORD_SCREEN_DEF false
@@ -111,8 +121,25 @@
 #define SERIAL_WINDOW_RECT_KEY_W "WindowRectW"
 #define SERIAL_WINDOW_RECT_KEY_H "WindowRectH"
 #define SERIAL_WINDOW_RECT_KEY_DEF -1
+#define SERIAL_KEYMAP_EDITOR_RECT_KEY_X "KeymapEditorRectX"
+#define SERIAL_KEYMAP_EDITOR_RECT_KEY_Y "KeymapEditorRectY"
+#define SERIAL_KEYMAP_EDITOR_RECT_KEY_W "KeymapEditorRectW"
+#define SERIAL_KEYMAP_EDITOR_RECT_KEY_H "KeymapEditorRectH"
 #define SERIAL_NICK_NAME_KEY "NickName"
 #define SERIAL_NICK_NAME_DEF "Phone"
+#define SERIAL_REMOTE_CURSOR_ENABLED_KEY "RemoteCursorEnabled"
+#define SERIAL_CURSOR_SIZE_PX_KEY "CursorSizePx"
+#define SERIAL_NORMAL_MOUSE_COMPAT_ENABLED_KEY "NormalMouseCompatEnabled"
+#define SERIAL_NORMAL_MOUSE_TOUCH_PRIORITY_ENABLED_KEY "NormalMouseTouchPriorityEnabled"
+#define SERIAL_NORMAL_MOUSE_CURSOR_THROTTLE_ENABLED_KEY "NormalMouseCursorThrottleEnabled"
+#define SERIAL_NORMAL_MOUSE_CURSOR_FLUSH_INTERVAL_MS_KEY "NormalMouseCursorFlushIntervalMs"
+#define SERIAL_NORMAL_MOUSE_CURSOR_CLICK_SUPPRESSION_MS_KEY "NormalMouseCursorClickSuppressionMs"
+#define SERIAL_NORMAL_MOUSE_TAP_MIN_HOLD_MS_KEY "NormalMouseTapMinHoldMs"
+
+#define COMMON_REMOTE_CURSOR_ENABLED_KEY "RemoteCursorEnabled"
+#define COMMON_REMOTE_CURSOR_ENABLED_DEF false
+#define COMMON_CURSOR_SIZE_PX_KEY "CursorSizePx"
+#define COMMON_CURSOR_SIZE_PX_DEF 24
 
 // IP history
 #define IP_HISTORY_KEY "IpHistory"
@@ -125,6 +152,100 @@
 #define PORT_HISTORY_MAX 10
 
 QString Config::s_configPath = "";
+
+namespace {
+bool parseBoolSetting(const QVariant &value, bool defaultValue, bool *ok = nullptr)
+{
+    if (ok) {
+        *ok = false;
+    }
+
+    if (!value.isValid() || value.isNull()) {
+        return defaultValue;
+    }
+
+#if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
+    if (value.typeId() == QMetaType::Bool) {
+#else
+    if (value.type() == QVariant::Bool) {
+#endif
+        if (ok) {
+            *ok = true;
+        }
+        return value.toBool();
+    }
+
+    bool intOk = false;
+    const int intValue = value.toInt(&intOk);
+    if (intOk) {
+        if (ok) {
+            *ok = true;
+        }
+        return intValue != 0;
+    }
+
+    const QString text = value.toString().trimmed().toLower();
+    if (text == "true" || text == "yes" || text == "on" || text == "1") {
+        if (ok) {
+            *ok = true;
+        }
+        return true;
+    }
+    if (text == "false" || text == "no" || text == "off" || text == "0") {
+        if (ok) {
+            *ok = true;
+        }
+        return false;
+    }
+
+    return defaultValue;
+}
+
+QString themeModeToString(ThemeMode mode)
+{
+    switch (mode) {
+    case ThemeMode::Light:
+        return QStringLiteral("Light");
+    case ThemeMode::Dark:
+        return QStringLiteral("Dark");
+    case ThemeMode::System:
+    default:
+        return QStringLiteral("System");
+    }
+}
+
+ThemeMode themeModeFromVariant(const QVariant &value)
+{
+    if (!value.isValid() || value.isNull()) {
+        return ThemeMode::System;
+    }
+
+#if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
+    if (value.typeId() == QMetaType::Int) {
+#else
+    if (value.type() == QVariant::Int) {
+#endif
+        switch (value.toInt()) {
+        case static_cast<int>(ThemeMode::Light):
+            return ThemeMode::Light;
+        case static_cast<int>(ThemeMode::Dark):
+            return ThemeMode::Dark;
+        case static_cast<int>(ThemeMode::System):
+        default:
+            return ThemeMode::System;
+        }
+    }
+
+    const QString text = value.toString().trimmed().toLower();
+    if (text == QLatin1String("light")) {
+        return ThemeMode::Light;
+    }
+    if (text == QLatin1String("dark")) {
+        return ThemeMode::Dark;
+    }
+    return ThemeMode::System;
+}
+}
 
 Config::Config(QObject *parent) : QObject(parent)
 {
@@ -189,13 +310,16 @@ const QString &Config::getConfigPath()
 void Config::setUserBootConfig(const UserBootConfig &config)
 {
     m_userData->beginGroup(GROUP_COMMON);
+    m_userData->setValue(COMMON_THEME_MODE_KEY, themeModeToString(config.themeMode));
     m_userData->setValue(COMMON_RECORD_KEY, config.recordPath);
     m_userData->setValue(COMMON_BITRATE_KEY, config.bitRate);
+    m_userData->setValue(COMMON_MAX_FPS_KEY, qBound(0, config.maxFps, 240));
     m_userData->setValue(COMMON_MAX_SIZE_INDEX_KEY, config.maxSizeIndex);
     m_userData->setValue(COMMON_RECORD_FORMAT_INDEX_KEY, config.recordFormatIndex);
     m_userData->setValue(COMMON_FRAMELESS_WINDOW_KEY, config.framelessWindow);
     m_userData->setValue(COMMON_LOCK_ORIENTATION_INDEX_KEY, config.lockOrientationIndex);
-    m_userData->setValue(COMMON_VIDEO_CENTER_CROP_SIZE_KEY, config.videoCenterCropSize);
+    m_userData->setValue(COMMON_LOCAL_TEXT_INPUT_ENABLED_KEY, config.localTextInputEnabled);
+    m_userData->setValue(COMMON_LOCAL_TEXT_INPUT_SHORTCUT_KEY, config.localTextInputShortcut);
     m_userData->setValue(COMMON_RECORD_SCREEN_KEY, config.recordScreen);
     m_userData->setValue(COMMON_RECORD_BACKGROUD_KEY, config.recordBackground);
     m_userData->setValue(COMMON_REVERSE_CONNECT_KEY, config.reverseConnect);
@@ -214,12 +338,14 @@ UserBootConfig Config::getUserBootConfig()
 {
     UserBootConfig config;
     m_userData->beginGroup(GROUP_COMMON);
+    config.themeMode = themeModeFromVariant(m_userData->value(COMMON_THEME_MODE_KEY, COMMON_THEME_MODE_DEF));
     config.recordPath = m_userData->value(COMMON_RECORD_KEY, COMMON_RECORD_DEF).toString();
     config.bitRate = m_userData->value(COMMON_BITRATE_KEY, COMMON_BITRATE_DEF).toUInt();
     config.maxSizeIndex = m_userData->value(COMMON_MAX_SIZE_INDEX_KEY, COMMON_MAX_SIZE_INDEX_DEF).toInt();
     config.recordFormatIndex = m_userData->value(COMMON_RECORD_FORMAT_INDEX_KEY, COMMON_RECORD_FORMAT_INDEX_DEF).toInt();
     config.lockOrientationIndex = m_userData->value(COMMON_LOCK_ORIENTATION_INDEX_KEY, COMMON_LOCK_ORIENTATION_INDEX_DEF).toInt();
-    config.videoCenterCropSize = m_userData->value(COMMON_VIDEO_CENTER_CROP_SIZE_KEY, COMMON_VIDEO_CENTER_CROP_SIZE_DEF).toInt();
+    config.localTextInputEnabled = m_userData->value(COMMON_LOCAL_TEXT_INPUT_ENABLED_KEY, COMMON_LOCAL_TEXT_INPUT_ENABLED_DEF).toBool();
+    config.localTextInputShortcut = m_userData->value(COMMON_LOCAL_TEXT_INPUT_SHORTCUT_KEY, COMMON_LOCAL_TEXT_INPUT_SHORTCUT_DEF).toString();
     config.framelessWindow = m_userData->value(COMMON_FRAMELESS_WINDOW_KEY, COMMON_FRAMELESS_WINDOW_DEF).toBool();
     config.recordScreen = m_userData->value(COMMON_RECORD_SCREEN_KEY, COMMON_RECORD_SCREEN_DEF).toBool();
     config.recordBackground = m_userData->value(COMMON_RECORD_BACKGROUD_KEY, COMMON_RECORD_BACKGROUD_DEF).toBool();
@@ -232,6 +358,7 @@ UserBootConfig Config::getUserBootConfig()
     config.autoUpdateDevice = m_userData->value(COMMON_AUTO_UPDATE_DEVICE_KEY, COMMON_AUTO_UPDATE_DEVICE_DEF).toBool();
     config.showToolbar =m_userData->value(COMMON_SHOW_TOOLBAR_KEY,COMMON_SHOW_TOOLBAR_DEF).toBool();
     m_userData->endGroup();
+    config.maxFps = getGlobalMaxFps();
     return config;
 }
 
@@ -275,6 +402,255 @@ QRect Config::getRect(const QString &serial)
     return rc;
 }
 
+void Config::setKeymapEditorRect(const QString &serial, const QRect &rc)
+{
+    m_userData->beginGroup(serial);
+    m_userData->setValue(SERIAL_KEYMAP_EDITOR_RECT_KEY_X, rc.left());
+    m_userData->setValue(SERIAL_KEYMAP_EDITOR_RECT_KEY_Y, rc.top());
+    m_userData->setValue(SERIAL_KEYMAP_EDITOR_RECT_KEY_W, rc.width());
+    m_userData->setValue(SERIAL_KEYMAP_EDITOR_RECT_KEY_H, rc.height());
+    m_userData->endGroup();
+    m_userData->sync();
+}
+
+QRect Config::getKeymapEditorRect(const QString &serial)
+{
+    QRect rc;
+    m_userData->beginGroup(serial);
+    rc.setX(m_userData->value(SERIAL_KEYMAP_EDITOR_RECT_KEY_X, SERIAL_WINDOW_RECT_KEY_DEF).toInt());
+    rc.setY(m_userData->value(SERIAL_KEYMAP_EDITOR_RECT_KEY_Y, SERIAL_WINDOW_RECT_KEY_DEF).toInt());
+    rc.setWidth(m_userData->value(SERIAL_KEYMAP_EDITOR_RECT_KEY_W, SERIAL_WINDOW_RECT_KEY_DEF).toInt());
+    rc.setHeight(m_userData->value(SERIAL_KEYMAP_EDITOR_RECT_KEY_H, SERIAL_WINDOW_RECT_KEY_DEF).toInt());
+    m_userData->endGroup();
+    return rc;
+}
+
+bool Config::isDeviceCenterCropEnabled(const QString &serial)
+{
+    return getDeviceCenterCropSize(serial) > 0;
+}
+
+int Config::getDeviceCenterCropSize(const QString &serial)
+{
+    const QString trimmedSerial = serial.trimmed();
+    if (trimmedSerial.isEmpty()) {
+        return 0;
+    }
+
+    m_userData->beginGroup(trimmedSerial);
+    bool intOk = false;
+    const int cropSize = m_userData->value(COMMON_VIDEO_CENTER_CROP_SIZE_KEY, 0).toInt(&intOk);
+    m_userData->endGroup();
+    if (!intOk || cropSize <= 0) {
+        return 0;
+    }
+
+    return qBound(2, cropSize, 4096);
+}
+
+void Config::setDeviceCenterCropSize(const QString &serial, int cropSize)
+{
+    const QString trimmedSerial = serial.trimmed();
+    if (trimmedSerial.isEmpty()) {
+        return;
+    }
+
+    m_userData->beginGroup(trimmedSerial);
+    m_userData->setValue(COMMON_VIDEO_CENTER_CROP_SIZE_KEY, qBound(2, cropSize, 4096));
+    m_userData->endGroup();
+    m_userData->sync();
+}
+
+void Config::clearDeviceCenterCropSize(const QString &serial)
+{
+    const QString trimmedSerial = serial.trimmed();
+    if (trimmedSerial.isEmpty()) {
+        return;
+    }
+
+    m_userData->beginGroup(trimmedSerial);
+    m_userData->remove(COMMON_VIDEO_CENTER_CROP_SIZE_KEY);
+    m_userData->endGroup();
+    m_userData->sync();
+}
+
+bool Config::hasDeviceMaxFpsOverride(const QString &serial)
+{
+    const QString trimmedSerial = serial.trimmed();
+    if (trimmedSerial.isEmpty()) {
+        return false;
+    }
+
+    m_userData->beginGroup(trimmedSerial);
+    const bool hasOverride = m_userData->contains(COMMON_MAX_FPS_KEY);
+    m_userData->endGroup();
+    return hasOverride;
+}
+
+int Config::getDeviceMaxFpsOverride(const QString &serial)
+{
+    const QString trimmedSerial = serial.trimmed();
+    if (trimmedSerial.isEmpty()) {
+        return 0;
+    }
+
+    m_userData->beginGroup(trimmedSerial);
+    bool intOk = false;
+    int fps = m_userData->value(COMMON_MAX_FPS_KEY, 0).toInt(&intOk);
+    m_userData->endGroup();
+    if (!intOk) {
+        fps = 0;
+    }
+    return qBound(0, fps, 240);
+}
+
+void Config::setDeviceMaxFpsOverride(const QString &serial, int fps)
+{
+    const QString trimmedSerial = serial.trimmed();
+    if (trimmedSerial.isEmpty()) {
+        return;
+    }
+
+    m_userData->beginGroup(trimmedSerial);
+    m_userData->setValue(COMMON_MAX_FPS_KEY, qBound(0, fps, 240));
+    m_userData->endGroup();
+    m_userData->sync();
+}
+
+void Config::clearDeviceMaxFpsOverride(const QString &serial)
+{
+    const QString trimmedSerial = serial.trimmed();
+    if (trimmedSerial.isEmpty()) {
+        return;
+    }
+
+    m_userData->beginGroup(trimmedSerial);
+    m_userData->remove(COMMON_MAX_FPS_KEY);
+    m_userData->endGroup();
+    m_userData->sync();
+}
+
+int Config::getEffectiveMaxFps(const QString &serial)
+{
+    if (hasDeviceMaxFpsOverride(serial)) {
+        return getDeviceMaxFpsOverride(serial);
+    }
+    return getGlobalMaxFps();
+}
+
+DeviceMouseConfig Config::getDeviceMouseConfig(const QString &serial)
+{
+    DeviceMouseConfig config;
+
+    m_settings->beginGroup(GROUP_COMMON);
+    bool boolOk = false;
+    config.remoteCursorEnabled = parseBoolSetting(m_settings->value(COMMON_REMOTE_CURSOR_ENABLED_KEY,
+                                                                    COMMON_REMOTE_CURSOR_ENABLED_DEF),
+                                                  COMMON_REMOTE_CURSOR_ENABLED_DEF,
+                                                  &boolOk);
+    if (!boolOk) {
+        config.remoteCursorEnabled = COMMON_REMOTE_CURSOR_ENABLED_DEF;
+    }
+
+    bool intOk = false;
+    config.cursorSizePx = m_settings->value(COMMON_CURSOR_SIZE_PX_KEY, COMMON_CURSOR_SIZE_PX_DEF).toInt(&intOk);
+    if (!intOk) {
+        config.cursorSizePx = COMMON_CURSOR_SIZE_PX_DEF;
+    }
+    m_settings->endGroup();
+
+    const QString trimmedSerial = serial.trimmed();
+    if (trimmedSerial.isEmpty()) {
+        config.cursorSizePx = qBound(8, config.cursorSizePx, 128);
+        return config;
+    }
+
+    m_userData->beginGroup(trimmedSerial);
+
+    QVariant value = m_userData->value(SERIAL_REMOTE_CURSOR_ENABLED_KEY);
+    if (value.isValid()) {
+        config.remoteCursorEnabled = parseBoolSetting(value, config.remoteCursorEnabled);
+    }
+
+    value = m_userData->value(SERIAL_CURSOR_SIZE_PX_KEY);
+    if (value.isValid()) {
+        const int parsedCursorSize = value.toInt(&intOk);
+        if (intOk) {
+            config.cursorSizePx = parsedCursorSize;
+        }
+    }
+
+    value = m_userData->value(SERIAL_NORMAL_MOUSE_COMPAT_ENABLED_KEY);
+    if (value.isValid()) {
+        config.normalMouseCompatEnabled = parseBoolSetting(value, false);
+    }
+
+    value = m_userData->value(SERIAL_NORMAL_MOUSE_TOUCH_PRIORITY_ENABLED_KEY);
+    if (value.isValid()) {
+        config.normalMouseTouchPriorityEnabled = parseBoolSetting(value, true);
+    }
+
+    value = m_userData->value(SERIAL_NORMAL_MOUSE_CURSOR_THROTTLE_ENABLED_KEY);
+    if (value.isValid()) {
+        config.normalMouseCursorThrottleEnabled = parseBoolSetting(value, true);
+    }
+
+    value = m_userData->value(SERIAL_NORMAL_MOUSE_CURSOR_FLUSH_INTERVAL_MS_KEY);
+    if (value.isValid()) {
+        config.normalMouseCursorFlushIntervalMs = value.toInt(&intOk);
+        if (!intOk) {
+            config.normalMouseCursorFlushIntervalMs = 33;
+        }
+    }
+
+    value = m_userData->value(SERIAL_NORMAL_MOUSE_CURSOR_CLICK_SUPPRESSION_MS_KEY);
+    if (value.isValid()) {
+        config.normalMouseCursorClickSuppressionMs = value.toInt(&intOk);
+        if (!intOk) {
+            config.normalMouseCursorClickSuppressionMs = 120;
+        }
+    }
+
+    value = m_userData->value(SERIAL_NORMAL_MOUSE_TAP_MIN_HOLD_MS_KEY);
+    if (value.isValid()) {
+        config.normalMouseTapMinHoldMs = value.toInt(&intOk);
+        if (!intOk) {
+            config.normalMouseTapMinHoldMs = 16;
+        }
+    }
+
+    m_userData->endGroup();
+
+    config.cursorSizePx = qBound(8, config.cursorSizePx, 128);
+    config.normalMouseCursorFlushIntervalMs = qBound(16, config.normalMouseCursorFlushIntervalMs, 100);
+    config.normalMouseCursorClickSuppressionMs = qBound(0, config.normalMouseCursorClickSuppressionMs, 300);
+    config.normalMouseTapMinHoldMs = qBound(0, config.normalMouseTapMinHoldMs, 40);
+    return config;
+}
+
+void Config::setDeviceMouseConfig(const QString &serial, const DeviceMouseConfig &config)
+{
+    const QString trimmedSerial = serial.trimmed();
+    if (trimmedSerial.isEmpty()) {
+        return;
+    }
+
+    m_userData->beginGroup(trimmedSerial);
+    m_userData->setValue(SERIAL_REMOTE_CURSOR_ENABLED_KEY, config.remoteCursorEnabled);
+    m_userData->setValue(SERIAL_CURSOR_SIZE_PX_KEY, qBound(8, config.cursorSizePx, 128));
+    m_userData->setValue(SERIAL_NORMAL_MOUSE_COMPAT_ENABLED_KEY, config.normalMouseCompatEnabled);
+    m_userData->setValue(SERIAL_NORMAL_MOUSE_TOUCH_PRIORITY_ENABLED_KEY, config.normalMouseTouchPriorityEnabled);
+    m_userData->setValue(SERIAL_NORMAL_MOUSE_CURSOR_THROTTLE_ENABLED_KEY, config.normalMouseCursorThrottleEnabled);
+    m_userData->setValue(SERIAL_NORMAL_MOUSE_CURSOR_FLUSH_INTERVAL_MS_KEY,
+                         qBound(16, config.normalMouseCursorFlushIntervalMs, 100));
+    m_userData->setValue(SERIAL_NORMAL_MOUSE_CURSOR_CLICK_SUPPRESSION_MS_KEY,
+                         qBound(0, config.normalMouseCursorClickSuppressionMs, 300));
+    m_userData->setValue(SERIAL_NORMAL_MOUSE_TAP_MIN_HOLD_MS_KEY,
+                         qBound(0, config.normalMouseTapMinHoldMs, 40));
+    m_userData->endGroup();
+    m_userData->sync();
+}
+
 void Config::setNickName(const QString &serial, const QString &name)
 {
     m_userData->beginGroup(serial);
@@ -292,13 +668,34 @@ QString Config::getNickName(const QString &serial)
     return name;
 }
 
+int Config::getGlobalMaxFps()
+{
+    int fps = COMMON_MAX_FPS_DEF;
+
+    m_userData->beginGroup(GROUP_COMMON);
+    bool intOk = false;
+    const QVariant userValue = m_userData->value(COMMON_MAX_FPS_KEY);
+    if (userValue.isValid()) {
+        fps = userValue.toInt(&intOk);
+        if (!intOk) {
+            fps = COMMON_MAX_FPS_DEF;
+        }
+    } else {
+        m_settings->beginGroup(GROUP_COMMON);
+        fps = m_settings->value(COMMON_MAX_FPS_KEY, COMMON_MAX_FPS_DEF).toInt(&intOk);
+        m_settings->endGroup();
+        if (!intOk) {
+            fps = COMMON_MAX_FPS_DEF;
+        }
+    }
+    m_userData->endGroup();
+
+    return qBound(0, fps, 240);
+}
+
 int Config::getMaxFps()
 {
-    int fps = 0;
-    m_settings->beginGroup(GROUP_COMMON);
-    fps = m_settings->value(COMMON_MAX_FPS_KEY, COMMON_MAX_FPS_DEF).toInt();
-    m_settings->endGroup();
-    return fps;
+    return getGlobalMaxFps();
 }
 
 int Config::getDesktopOpenGL()

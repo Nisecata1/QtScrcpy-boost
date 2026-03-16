@@ -1,7 +1,9 @@
 // #include <QDesktopWidget>
 #include <QCursor>
 #include <QCoreApplication>
+#include <QFile>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QLabel>
 #include <QMessageBox>
 #include <QMimeData>
@@ -10,6 +12,7 @@
 #include <QProcess>
 #include <QRegularExpression>
 #include <QHostAddress>
+#include <QLineEdit>
 #include <QSettings>
 #include <QScreen>
 #include <QShortcut>
@@ -20,14 +23,20 @@
 #include <QtWidgets/QHBoxLayout>
 #include <cmath>
 #include <cstring>
+#include <functional>
 
 #if defined(Q_OS_WIN32)
 #include <Windows.h>
+#include "../util/winutils.h"
 #endif
 
 #include "config.h"
 #include "iconhelper.h"
+#include "keymapeditor/keymapeditordocument.h"
+#include "keymapeditor/keymapeditoroverlay.h"
+#include "keymapeditor/keymapeditorpanel.h"
 #include "qyuvopenglwidget.h"
+#include "thememanager.h"
 #include "toolform.h"
 #include "mousetap/mousetap.h"
 #include "ui_videoform.h"
@@ -46,6 +55,36 @@ constexpr int kRelativeLookConfigDebounceMs = 120;
 constexpr quint32 kAiDeltaMagic = 0x31444941U; // "AID1" little-endian
 constexpr quint16 kAiDeltaVersion = 1;
 constexpr quint16 kAiUdpPort = 12345;
+
+class LocalTextInputOverlay final : public QLineEdit
+{
+public:
+    using QLineEdit::QLineEdit;
+
+    std::function<void()> onEscapePressed;
+    std::function<void()> onPassiveFocusOut;
+
+protected:
+    void keyPressEvent(QKeyEvent *event) override
+    {
+        if (event && event->key() == Qt::Key_Escape) {
+            if (onEscapePressed) {
+                onEscapePressed();
+            }
+            event->accept();
+            return;
+        }
+        QLineEdit::keyPressEvent(event);
+    }
+
+    void focusOutEvent(QFocusEvent *event) override
+    {
+        QLineEdit::focusOutEvent(event);
+        if (onPassiveFocusOut) {
+            onPassiveFocusOut();
+        }
+    }
+};
 
 QString resolveUserDataIniPath()
 {
@@ -195,6 +234,36 @@ bool parseInputOrientation(const QString &text, int &orientationOut)
         QRegularExpression::CaseInsensitiveOption);
     return captureRegexOrientation(text, surfaceOrientationRe, orientationOut, true);
 }
+
+QRect keymapEditorAvailableGeometry(const QWidget *anchor)
+{
+    QScreen *screen = nullptr;
+    if (anchor) {
+        screen = anchor->screen();
+        if (!screen) {
+            screen = QGuiApplication::screenAt(anchor->frameGeometry().center());
+        }
+    }
+    if (!screen) {
+        screen = QGuiApplication::primaryScreen();
+    }
+    return screen ? screen->availableGeometry() : QRect(0, 0, 1920, 1080);
+}
+
+bool keymapEditorGeometryIntersectsVisibleScreen(const QRect &rect)
+{
+    if (!rect.isValid() || rect.isEmpty()) {
+        return false;
+    }
+
+    const QList<QScreen *> screens = QGuiApplication::screens();
+    for (QScreen *screen : screens) {
+        if (screen && screen->availableGeometry().intersects(rect)) {
+            return true;
+        }
+    }
+    return false;
+}
 } // namespace
 
 #pragma pack(push, 1)
@@ -223,12 +292,17 @@ VideoForm::VideoForm(bool framelessWindow, bool skin, bool showToolbar, QWidget 
     if (framelessWindow) {
         setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
     }
+    connect(&ThemeManager::getInstance(), &ThemeManager::themeChanged, this, [this]() {
+        applyTheme();
+    });
+    applyTheme();
 }
 
 VideoForm::~VideoForm()
 {
+    shutdownKeymapEditor(false);
     stopOrientationPolling();
-    setRawInputActive(false);
+    releaseGrabbedCursorState();
     delete ui;
 }
 
@@ -251,6 +325,7 @@ void VideoForm::initUI()
 
     m_videoWidget = new QYUVOpenGLWidget();
     m_videoWidget->hide();
+    m_videoWidget->setFocusPolicy(Qt::StrongFocus);
     ui->keepRatioWidget->setWidget(m_videoWidget);
     ui->keepRatioWidget->setWidthHeightRatio(m_widthHeightRatio);
     loadVideoEnabledConfig();
@@ -262,6 +337,33 @@ void VideoForm::initUI()
     m_noVideoLabel->setAttribute(Qt::WA_TransparentForMouseEvents, true);
     m_noVideoLabel->setFocusPolicy(Qt::NoFocus);
     m_noVideoLabel->hide();
+
+    auto localTextInput = new LocalTextInputOverlay(ui->keepRatioWidget);
+    localTextInput->setPlaceholderText(tr("Type here and press Enter"));
+    localTextInput->setClearButtonEnabled(true);
+    localTextInput->setFocusPolicy(Qt::StrongFocus);
+    localTextInput->setAttribute(Qt::WA_InputMethodEnabled, true);
+    localTextInput->setStyleSheet(
+        "QLineEdit {"
+        " background: rgba(18, 18, 18, 210);"
+        " color: #F2F2F2;"
+        " border: 1px solid rgba(255, 255, 255, 90);"
+        " border-radius: 8px;"
+        " padding: 6px 10px;"
+        " selection-background-color: rgba(64, 128, 255, 180);"
+        "}"
+    );
+    localTextInput->hide();
+    localTextInput->onEscapePressed = [this]() {
+        hideLocalTextInputOverlay(true);
+    };
+    localTextInput->onPassiveFocusOut = [this]() {
+        hideLocalTextInputOverlay(false, false);
+    };
+    connect(localTextInput, &QLineEdit::returnPressed, this, [this]() {
+        submitLocalTextInputOverlay();
+    });
+    m_localTextInput = localTextInput;
 
     m_fpsLabel = new QLabel(m_videoWidget);
     QFont ft;
@@ -291,6 +393,42 @@ void VideoForm::initUI()
     }
     startOrientationPollingIfNeeded();
     updateNoVideoOverlay();
+}
+
+void VideoForm::applyTheme()
+{
+    const bool darkTheme = ThemeManager::getInstance().isDarkTheme();
+    if (m_noVideoLabel) {
+        m_noVideoLabel->setStyleSheet(darkTheme
+            ? QStringLiteral("QLabel { color: #D0D0D0; background: #111111; font-size: 16px; }")
+            : QStringLiteral("QLabel { color: #1F2328; background: rgba(255,255,255,0.92); font-size: 16px; }"));
+    }
+
+    if (m_localTextInput) {
+        m_localTextInput->setStyleSheet(darkTheme
+            ? QStringLiteral(
+                "QLineEdit {"
+                " background: rgba(18, 18, 18, 210);"
+                " color: #F2F2F2;"
+                " border: 1px solid rgba(255, 255, 255, 90);"
+                " border-radius: 8px;"
+                " padding: 6px 10px;"
+                " selection-background-color: rgba(64, 128, 255, 180);"
+                "}")
+            : QStringLiteral(
+                "QLineEdit {"
+                " background: rgba(255, 255, 255, 236);"
+                " color: #1F2328;"
+                " border: 1px solid rgba(11, 132, 243, 120);"
+                " border-radius: 8px;"
+                " padding: 6px 10px;"
+                " selection-background-color: rgba(11, 132, 243, 70);"
+                "}"));
+    }
+
+#ifdef Q_OS_WIN32
+    WinUtils::setDarkBorderToWindow((HWND)winId(), darkTheme);
+#endif
 }
 
 QRect VideoForm::getGrabCursorRect()
@@ -392,6 +530,7 @@ void VideoForm::updateRender(int width, int height, uint8_t* dataY, uint8_t* dat
 
     m_videoWidget->setStreamFrameSize(m_streamFrameSize);
     applyVideoCanvasLayout();
+    positionKeymapEditorUi();
 
     if (!m_videoSessionFirstFrameLogged && m_streamFrameSize.isValid() && isVisible()
         && m_videoWidget && m_videoWidget->size().isValid()
@@ -437,6 +576,8 @@ void VideoForm::applyVideoCanvasLayout()
 
     m_videoWidget->setCanvasSize(canvasSize);
     m_videoWidget->setContentRect(m_contentRect);
+    positionLocalTextInput();
+    positionKeymapEditorUi();
 }
 void VideoForm::setSerial(const QString &serial)
 {
@@ -455,6 +596,55 @@ void VideoForm::setInitialOrientationHint(int orientation)
 {
     m_pendingInitialOrientation = orientation;
 }
+
+void VideoForm::setLocalTextInputConfig(bool enabled, const QKeySequence &shortcut)
+{
+    m_localTextInputEnabled = enabled;
+    m_localTextInputKeySequence = shortcut;
+
+    if (m_localTextInputShortcut) {
+        delete m_localTextInputShortcut.data();
+        m_localTextInputShortcut = nullptr;
+    }
+
+    if (!m_localTextInputEnabled || m_localTextInputKeySequence.isEmpty()) {
+        hideLocalTextInputOverlay(false);
+        return;
+    }
+
+    auto shortcutObj = new QShortcut(m_localTextInputKeySequence, this);
+    shortcutObj->setAutoRepeat(false);
+    connect(shortcutObj, &QShortcut::activated, this, [this]() {
+        showLocalTextInputOverlay();
+    });
+    m_localTextInputShortcut = shortcutObj;
+    updateKeymapEditorShortcutStates();
+}
+
+void VideoForm::setScriptBinding(const QString &filePath, const QString &displayName, const QString &json)
+{
+    m_scriptFilePath = filePath;
+    m_scriptDisplayName = displayName;
+    m_lastAppliedScriptJson = json;
+
+    if (!m_keymapEditorDocument || !m_keymapEditorActive || m_keymapEditorDocument->isDirty()) {
+        return;
+    }
+
+    QString errorString;
+    if (!m_keymapEditorDocument->loadFromJson(m_lastAppliedScriptJson, m_scriptFilePath, m_scriptDisplayName, &errorString)) {
+        qWarning() << "Failed to reload keymap editor document from updated script binding:"
+                   << "serial=" << m_serial
+                   << "filePath=" << m_scriptFilePath
+                   << "error=" << errorString;
+        return;
+    }
+
+    if (m_keymapEditorPanel) {
+        m_keymapEditorPanel->setScriptDisplayName(m_scriptDisplayName);
+    }
+}
+
 void VideoForm::showToolForm(bool show)
 {
     if (!m_toolForm) {
@@ -465,7 +655,7 @@ void VideoForm::showToolForm(bool show)
         });
     }
     m_toolForm->move(pos().x() + geometry().width(), pos().y() + 30);
-    m_toolForm->setVisible(show);
+    m_toolForm->setVisible(show && !isKeymapEditorActive());
 }
 
 void VideoForm::moveCenter()
@@ -481,179 +671,411 @@ void VideoForm::moveCenter()
 
 void VideoForm::installShortcut()
 {
-    QShortcut *shortcut = nullptr;
+    auto registerStandardShortcut = [this](const QKeySequence &sequence, const std::function<void()> &handler, bool autoRepeat = false) {
+        auto *shortcut = new QShortcut(sequence, this);
+        shortcut->setAutoRepeat(autoRepeat);
+        connect(shortcut, &QShortcut::activated, this, [handler]() {
+            handler();
+        });
+        m_standardShortcuts.push_back(shortcut);
+    };
 
-    // switchFullScreen
-    shortcut = new QShortcut(QKeySequence("Ctrl+f"), this);
-    shortcut->setAutoRepeat(false);
-    connect(shortcut, &QShortcut::activated, this, [this]() {
+    registerStandardShortcut(QKeySequence("Ctrl+f"), [this]() {
         auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
         if (!device) {
             return;
         }
         switchFullScreen();
     });
-
-    // resizeSquare
-    shortcut = new QShortcut(QKeySequence("Ctrl+g"), this);
-    shortcut->setAutoRepeat(false);
-    connect(shortcut, &QShortcut::activated, this, [this]() { resizeSquare(); });
-
-    // removeBlackRect
-    shortcut = new QShortcut(QKeySequence("Ctrl+w"), this);
-    shortcut->setAutoRepeat(false);
-    connect(shortcut, &QShortcut::activated, this, [this]() { removeBlackRect(); });
-
-    // postGoHome
-    shortcut = new QShortcut(QKeySequence("Ctrl+h"), this);
-    shortcut->setAutoRepeat(false);
-    connect(shortcut, &QShortcut::activated, this, [this]() {
+    registerStandardShortcut(QKeySequence("Ctrl+g"), [this]() { resizeSquare(); });
+    registerStandardShortcut(QKeySequence("Ctrl+w"), [this]() { removeBlackRect(); });
+    registerStandardShortcut(QKeySequence("Ctrl+h"), [this]() {
         auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
-        if (!device) {
-            return;
+        if (device) {
+            device->postGoHome();
         }
-        device->postGoHome();
+    });
+    registerStandardShortcut(QKeySequence("Ctrl+b"), [this]() {
+        auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
+        if (device) {
+            device->postGoBack();
+        }
+    });
+    registerStandardShortcut(QKeySequence("Ctrl+s"), [this]() {
+        auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
+        if (device) {
+            emit device->postAppSwitch();
+        }
+    });
+    registerStandardShortcut(QKeySequence("Ctrl+m"), [this]() {
+        auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
+        if (device) {
+            device->postGoMenu();
+        }
+    });
+    registerStandardShortcut(QKeySequence("Ctrl+up"), [this]() {
+        auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
+        if (device) {
+            emit device->postVolumeUp();
+        }
+    }, true);
+    registerStandardShortcut(QKeySequence("Ctrl+down"), [this]() {
+        auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
+        if (device) {
+            emit device->postVolumeDown();
+        }
+    }, true);
+    registerStandardShortcut(QKeySequence("Ctrl+p"), [this]() {
+        auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
+        if (device) {
+            emit device->postPower();
+        }
+    });
+    registerStandardShortcut(QKeySequence("Ctrl+o"), [this]() {
+        auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
+        if (device) {
+            emit device->setDisplayPower(false);
+        }
+    });
+    registerStandardShortcut(QKeySequence("Ctrl+n"), [this]() {
+        auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
+        if (device) {
+            emit device->expandNotificationPanel();
+        }
+    });
+    registerStandardShortcut(QKeySequence("Ctrl+Shift+n"), [this]() {
+        auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
+        if (device) {
+            emit device->collapsePanel();
+        }
+    });
+    registerStandardShortcut(QKeySequence("Ctrl+c"), [this]() {
+        auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
+        if (device) {
+            emit device->postCopy();
+        }
+    });
+    registerStandardShortcut(QKeySequence("Ctrl+x"), [this]() {
+        auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
+        if (device) {
+            emit device->postCut();
+        }
+    });
+    registerStandardShortcut(QKeySequence("Ctrl+v"), [this]() {
+        auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
+        if (device) {
+            emit device->setDeviceClipboard();
+        }
+    });
+    registerStandardShortcut(QKeySequence("Ctrl+Shift+v"), [this]() {
+        auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
+        if (device) {
+            emit device->clipboardPaste();
+        }
     });
 
-    // postGoBack
-    shortcut = new QShortcut(QKeySequence("Ctrl+b"), this);
-    shortcut->setAutoRepeat(false);
-    connect(shortcut, &QShortcut::activated, this, [this]() {
-        auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
-        if (!device) {
-            return;
+    m_toggleKeymapEditorShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+E")), this);
+    m_toggleKeymapEditorShortcut->setAutoRepeat(false);
+    connect(m_toggleKeymapEditorShortcut, &QShortcut::activated, this, [this]() {
+        if (isKeymapEditorActive()) {
+            shutdownKeymapEditor(true);
+        } else {
+            enterKeymapEditor();
         }
-        device->postGoBack();
     });
 
-    // postAppSwitch
-    shortcut = new QShortcut(QKeySequence("Ctrl+s"), this);
-    shortcut->setAutoRepeat(false);
-    connect(shortcut, &QShortcut::activated, this, [this]() {
-        auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
-        if (!device) {
-            return;
-        }
-        emit device->postAppSwitch();
-    });
+    updateKeymapEditorShortcutStates();
+}
 
-    // postGoMenu
-    shortcut = new QShortcut(QKeySequence("Ctrl+m"), this);
-    shortcut->setAutoRepeat(false);
-    connect(shortcut, &QShortcut::activated, this, [this]() {
-        auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
-        if (!device) {
-            return;
-        }
-        device->postGoMenu();
-    });
+void VideoForm::ensureKeymapEditorUi()
+{
+    if (!m_keymapEditorDocument) {
+        m_keymapEditorDocument = new KeymapEditorDocument(this);
+    }
 
-    // postVolumeUp
-    shortcut = new QShortcut(QKeySequence("Ctrl+up"), this);
-    connect(shortcut, &QShortcut::activated, this, [this]() {
-        auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
-        if (!device) {
-            return;
-        }
-        emit device->postVolumeUp();
-    });
+    if (!m_keymapEditorOverlay) {
+        m_keymapEditorOverlay = new KeymapEditorOverlay(ui->keepRatioWidget);
+        m_keymapEditorOverlay->hide();
+        connect(m_keymapEditorOverlay, &KeymapEditorOverlay::nodeSelected, this, [this](int nodeId) {
+            if (m_keymapEditorPanel) {
+                m_keymapEditorPanel->setSelectedNodeId(nodeId);
+            }
+        });
+    }
 
-    // postVolumeDown
-    shortcut = new QShortcut(QKeySequence("Ctrl+down"), this);
-    connect(shortcut, &QShortcut::activated, this, [this]() {
-        auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
-        if (!device) {
-            return;
-        }
-        emit device->postVolumeDown();
-    });
+    if (!m_keymapEditorPanel) {
+        m_keymapEditorPanel = new KeymapEditorPanel(this);
+        m_keymapEditorPanel->hide();
+        connect(m_keymapEditorPanel, &KeymapEditorPanel::nodeSelected, this, [this](int nodeId) {
+            if (m_keymapEditorOverlay) {
+                m_keymapEditorOverlay->setSelectedNodeId(nodeId);
+            }
+        });
+        connect(m_keymapEditorPanel, &KeymapEditorPanel::saveRequested, this, [this]() {
+            saveAndApplyKeymapEditor();
+        });
+        connect(m_keymapEditorPanel, &KeymapEditorPanel::discardRequested, this, [this]() {
+            shutdownKeymapEditor(false);
+        });
+        connect(m_keymapEditorPanel, &KeymapEditorPanel::closeRequested, this, [this]() {
+            shutdownKeymapEditor(true);
+        });
+    }
 
-    // postPower
-    shortcut = new QShortcut(QKeySequence("Ctrl+p"), this);
-    shortcut->setAutoRepeat(false);
-    connect(shortcut, &QShortcut::activated, this, [this]() {
-        auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
-        if (!device) {
-            return;
-        }
-        emit device->postPower();
-    });
+    m_keymapEditorOverlay->setDocument(m_keymapEditorDocument);
+    m_keymapEditorPanel->setDocument(m_keymapEditorDocument);
+}
 
-    shortcut = new QShortcut(QKeySequence("Ctrl+o"), this);
-    shortcut->setAutoRepeat(false);
-    connect(shortcut, &QShortcut::activated, this, [this]() {
-        auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
-        if (!device) {
-            return;
-        }
-        emit device->setDisplayPower(false);
-    });
+void VideoForm::positionKeymapEditorUi()
+{
+    if (!m_keymapEditorOverlay) {
+        return;
+    }
 
-    // expandNotificationPanel
-    shortcut = new QShortcut(QKeySequence("Ctrl+n"), this);
-    shortcut->setAutoRepeat(false);
-    connect(shortcut, &QShortcut::activated, this, [this]() {
-        auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
-        if (!device) {
-            return;
-        }
-        emit device->expandNotificationPanel();
-    });
+    QRect overlayRect = m_videoWidget ? m_videoWidget->geometry() : QRect();
+    if (!overlayRect.isValid() || overlayRect.isEmpty()) {
+        overlayRect = ui->keepRatioWidget->rect();
+    }
+    m_keymapEditorOverlay->setGeometry(overlayRect);
+    m_keymapEditorOverlay->raise();
+}
 
-    // collapsePanel
-    shortcut = new QShortcut(QKeySequence("Ctrl+Shift+n"), this);
-    shortcut->setAutoRepeat(false);
-    connect(shortcut, &QShortcut::activated, this, [this]() {
-        auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
-        if (!device) {
-            return;
-        }
-        emit device->collapsePanel();
-    });
+QRect VideoForm::defaultKeymapEditorPanelGeometry() const
+{
+    const int panelWidth = 340;
+    const int panelMargin = 14;
+    const int panelHeight = qMax(320, height() - panelMargin * 2);
 
-    // copy
-    shortcut = new QShortcut(QKeySequence("Ctrl+c"), this);
-    shortcut->setAutoRepeat(false);
-    connect(shortcut, &QShortcut::activated, this, [this]() {
-        auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
-        if (!device) {
-            return;
-        }
-        emit device->postCopy();
-    });
+    QRect desired(frameGeometry().right() + panelMargin + 1,
+                  frameGeometry().top() + panelMargin,
+                  panelWidth,
+                  panelHeight);
+    return normalizeKeymapEditorPanelGeometry(desired);
+}
 
-    // cut
-    shortcut = new QShortcut(QKeySequence("Ctrl+x"), this);
-    shortcut->setAutoRepeat(false);
-    connect(shortcut, &QShortcut::activated, this, [this]() {
-        auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
-        if (!device) {
-            return;
-        }
-        emit device->postCut();
-    });
+QRect VideoForm::normalizeKeymapEditorPanelGeometry(const QRect &requested) const
+{
+    QRect available = keymapEditorAvailableGeometry(this);
+    if (!available.isValid() || available.isEmpty()) {
+        return requested;
+    }
 
-    // clipboardPaste
-    shortcut = new QShortcut(QKeySequence("Ctrl+v"), this);
-    shortcut->setAutoRepeat(false);
-    connect(shortcut, &QShortcut::activated, this, [this]() {
-        auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
-        if (!device) {
-            return;
-        }
-        emit device->setDeviceClipboard();
-    });
+    QRect normalized = requested;
+    normalized.setWidth(qMin(normalized.width(), available.width()));
+    normalized.setHeight(qMin(normalized.height(), available.height()));
+    if (normalized.width() < 320) {
+        normalized.setWidth(qMin(320, available.width()));
+    }
+    if (normalized.height() < 320) {
+        normalized.setHeight(qMin(320, available.height()));
+    }
 
-    // setDeviceClipboard
-    shortcut = new QShortcut(QKeySequence("Ctrl+Shift+v"), this);
-    shortcut->setAutoRepeat(false);
-    connect(shortcut, &QShortcut::activated, this, [this]() {
-        auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
-        if (!device) {
+    if (normalized.left() < available.left()) {
+        normalized.moveLeft(available.left());
+    }
+    if (normalized.top() < available.top()) {
+        normalized.moveTop(available.top());
+    }
+    if (normalized.right() > available.right()) {
+        normalized.moveRight(available.right());
+    }
+    if (normalized.bottom() > available.bottom()) {
+        normalized.moveBottom(available.bottom());
+    }
+
+    if (normalized.left() < available.left()) {
+        normalized.moveLeft(available.left());
+    }
+    if (normalized.top() < available.top()) {
+        normalized.moveTop(available.top());
+    }
+    return normalized;
+}
+
+void VideoForm::restoreKeymapEditorPanelGeometry()
+{
+    if (!m_keymapEditorPanel) {
+        return;
+    }
+
+    QRect panelRect = Config::getInstance().getKeymapEditorRect(m_serial);
+    if (!panelRect.isValid() || panelRect.isEmpty() || !keymapEditorGeometryIntersectsVisibleScreen(panelRect)) {
+        panelRect = defaultKeymapEditorPanelGeometry();
+    }
+    m_keymapEditorPanel->setGeometry(normalizeKeymapEditorPanelGeometry(panelRect));
+}
+
+void VideoForm::saveKeymapEditorPanelGeometry()
+{
+    if (!m_keymapEditorPanel || m_serial.trimmed().isEmpty()) {
+        return;
+    }
+
+    const QRect rect = m_keymapEditorPanel->geometry();
+    if (!rect.isValid() || rect.isEmpty()) {
+        return;
+    }
+    Config::getInstance().setKeymapEditorRect(m_serial, rect);
+}
+
+void VideoForm::setKeymapEditorActive(bool active)
+{
+    if (m_keymapEditorActive == active) {
+        return;
+    }
+
+    m_keymapEditorActive = active;
+    if (active) {
+        hideLocalTextInputOverlay(false);
+        if (m_toolForm) {
+            m_toolForm->hide();
+        }
+        ensureKeymapEditorUi();
+        positionKeymapEditorUi();
+        restoreKeymapEditorPanelGeometry();
+        m_keymapEditorOverlay->show();
+        m_keymapEditorOverlay->raise();
+        m_keymapEditorPanel->show();
+        m_keymapEditorPanel->raise();
+        m_keymapEditorPanel->activateWindow();
+    } else {
+        if (m_keymapEditorOverlay) {
+            m_keymapEditorOverlay->hide();
+        }
+        if (m_keymapEditorPanel) {
+            saveKeymapEditorPanelGeometry();
+            m_keymapEditorPanel->hide();
+        }
+        if (!isFullScreen() && show_toolbar) {
+            showToolForm(true);
+        }
+    }
+
+    updateKeymapEditorShortcutStates();
+}
+
+void VideoForm::enterKeymapEditor()
+{
+    if (isKeymapEditorActive()) {
+        return;
+    }
+
+    auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
+    if (!device) {
+        return;
+    }
+
+    if (m_cursorGrabbed) {
+        releaseGrabbedCursorState();
+    }
+    hideLocalTextInputOverlay(false);
+
+    QString scriptJson = m_lastAppliedScriptJson;
+    if (scriptJson.isEmpty() && !m_scriptFilePath.isEmpty()) {
+        QFile file(m_scriptFilePath);
+        if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            scriptJson = QString::fromUtf8(file.readAll());
+        }
+    }
+
+    if (m_scriptFilePath.trimmed().isEmpty() || scriptJson.trimmed().isEmpty()) {
+        QMessageBox::warning(this, tr("keymap editor"), tr("No applied script is bound to this window."));
+        return;
+    }
+
+    ensureKeymapEditorUi();
+
+    QString errorString;
+    if (!m_keymapEditorDocument->loadFromJson(scriptJson, m_scriptFilePath, m_scriptDisplayName, &errorString)) {
+        QMessageBox::warning(this, tr("keymap editor"), tr("Could not load script:\n%1").arg(errorString));
+        return;
+    }
+
+    m_keymapEditorPanel->setScriptDisplayName(m_scriptDisplayName);
+    const QVector<KeymapEditorDocument::NodeInfo> nodes = m_keymapEditorDocument->nodeInfos();
+    const int selectedNodeId = nodes.isEmpty() ? -1 : nodes.first().id;
+    m_keymapEditorOverlay->setSelectedNodeId(selectedNodeId);
+    m_keymapEditorPanel->setSelectedNodeId(selectedNodeId);
+    setKeymapEditorActive(true);
+}
+
+void VideoForm::shutdownKeymapEditor(bool promptForUnsavedChanges)
+{
+    if (!isKeymapEditorActive()) {
+        return;
+    }
+
+    if (promptForUnsavedChanges && m_keymapEditorDocument && m_keymapEditorDocument->isDirty()) {
+        QWidget *boxParent = (m_keymapEditorPanel && m_keymapEditorPanel->isVisible())
+            ? static_cast<QWidget *>(m_keymapEditorPanel.data())
+            : static_cast<QWidget *>(this);
+        QMessageBox box(boxParent);
+        box.setIcon(QMessageBox::Question);
+        box.setWindowTitle(tr("keymap editor"));
+        box.setText(tr("Script has unsaved changes."));
+        QPushButton *saveButton = box.addButton(tr("Save && Apply"), QMessageBox::AcceptRole);
+        QPushButton *discardButton = box.addButton(tr("Discard"), QMessageBox::DestructiveRole);
+        QPushButton *cancelButton = box.addButton(tr("Cancel"), QMessageBox::RejectRole);
+        box.exec();
+
+        if (box.clickedButton() == saveButton) {
+            if (!saveAndApplyKeymapEditor()) {
+                return;
+            }
+        } else if (box.clickedButton() == cancelButton || box.clickedButton() == nullptr) {
             return;
         }
-        emit device->clipboardPaste();
-    });
+    }
+
+    setKeymapEditorActive(false);
+}
+
+bool VideoForm::saveAndApplyKeymapEditor()
+{
+    if (!m_keymapEditorDocument || !m_keymapEditorDocument->hasLoadedDocument()) {
+        return false;
+    }
+
+    QString errorString;
+    if (!m_keymapEditorDocument->save(&errorString)) {
+        QMessageBox::warning(this, tr("keymap editor"), tr("Could not save script:\n%1").arg(errorString));
+        return false;
+    }
+
+    auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
+    if (!device) {
+        QMessageBox::warning(this, tr("keymap editor"), tr("Device is no longer available."));
+        return false;
+    }
+
+    m_lastAppliedScriptJson = m_keymapEditorDocument->toJsonString();
+    qInfo() << "Keymap editor saved and applied:"
+            << "serial=" << m_serial
+            << "scriptFilePath=" << m_scriptFilePath;
+    device->updateScript(m_lastAppliedScriptJson);
+    setKeymapEditorActive(false);
+    return true;
+}
+
+void VideoForm::updateKeymapEditorShortcutStates()
+{
+    const bool editorActive = isKeymapEditorActive();
+    for (int i = 0; i < m_standardShortcuts.size(); ++i) {
+        if (m_standardShortcuts.at(i)) {
+            m_standardShortcuts.at(i)->setEnabled(!editorActive);
+        }
+    }
+    if (m_localTextInputShortcut) {
+        m_localTextInputShortcut->setEnabled(!editorActive);
+    }
+    if (m_toggleKeymapEditorShortcut) {
+        m_toggleKeymapEditorShortcut->setEnabled(true);
+    }
+}
+
+bool VideoForm::isKeymapEditorActive() const
+{
+    return m_keymapEditorActive;
 }
 
 QRect VideoForm::getScreenRect()
@@ -842,18 +1264,21 @@ void VideoForm::updateFPS(quint32 fps)
 
 void VideoForm::grabCursor(bool grab)
 {
-    m_cursorGrabbed = grab;
+    if (!grab) {
+        releaseGrabbedCursorState();
+        centerCursorToVideoFrame();
+        return;
+    }
+
+    hideLocalTextInputOverlay(false);
+    m_cursorGrabbed = true;
     reloadRelativeLookInputConfig();
 
     QRect rc = getGrabCursorRect();
-    MouseTap::getInstance()->enableMouseEventTap(rc, grab);
+    MouseTap::getInstance()->enableMouseEventTap(rc, true);
 
-    const bool enableRawInput = grab && m_rawInputEnabled;
+    const bool enableRawInput = m_rawInputEnabled;
     setRawInputActive(enableRawInput);
-
-    if (!grab) {
-        centerCursorToVideoFrame();
-    }
 }
 
 void VideoForm::centerCursorToVideoFrame()
@@ -872,6 +1297,106 @@ void VideoForm::centerCursorToVideoFrame()
     }
 }
 
+bool VideoForm::canUseLocalTextInput() const
+{
+    if (!m_localTextInputEnabled || !m_videoEnabled || !m_localTextInput || !m_videoWidget || m_cursorGrabbed || isKeymapEditorActive()) {
+        return false;
+    }
+
+    auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
+    if (!device) {
+        return false;
+    }
+
+    return !device->isCurrentCustomKeymap();
+}
+
+void VideoForm::positionLocalTextInput()
+{
+    if (!m_localTextInput || !ui || !ui->keepRatioWidget) {
+        return;
+    }
+
+    QRect anchorRect = m_videoWidget ? m_videoWidget->geometry() : QRect();
+    if (!anchorRect.isValid() || anchorRect.isEmpty()) {
+        anchorRect = ui->keepRatioWidget->rect();
+    }
+
+    if (!anchorRect.isValid() || anchorRect.isEmpty()) {
+        return;
+    }
+
+    const int sideMargin = 16;
+    const int bottomMargin = 24;
+    const int height = 38;
+    const int maxWidth = qMax(120, anchorRect.width() - sideMargin * 2);
+    const int preferredWidth = qRound(anchorRect.width() * 0.65);
+    const int width = qBound(qMin(180, maxWidth), preferredWidth, maxWidth);
+    const int x = anchorRect.x() + qMax(0, (anchorRect.width() - width) / 2);
+    const int y = anchorRect.y() + qMax(sideMargin, anchorRect.height() - height - bottomMargin);
+
+    m_localTextInput->setGeometry(x, y, width, height);
+    m_localTextInput->raise();
+}
+
+void VideoForm::showLocalTextInputOverlay()
+{
+    if (!canUseLocalTextInput()) {
+        return;
+    }
+
+    if (m_localTextInput->isVisible()) {
+        hideLocalTextInputOverlay(true);
+        return;
+    }
+
+    positionLocalTextInput();
+    m_localTextInput->clear();
+    m_localTextInput->show();
+    m_localTextInput->raise();
+    m_localTextInput->setFocus(Qt::ShortcutFocusReason);
+    m_localTextInput->selectAll();
+}
+
+void VideoForm::hideLocalTextInputOverlay(bool restoreVideoFocus, bool clearText)
+{
+    if (!m_localTextInput) {
+        return;
+    }
+
+    if (clearText) {
+        m_localTextInput->clear();
+    }
+    m_localTextInput->hide();
+
+    if (restoreVideoFocus && m_videoWidget) {
+        m_videoWidget->setFocus(Qt::OtherFocusReason);
+    }
+}
+
+void VideoForm::submitLocalTextInputOverlay()
+{
+    if (!m_localTextInput) {
+        return;
+    }
+
+    auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
+    if (!device) {
+        hideLocalTextInputOverlay(true);
+        return;
+    }
+
+    QString text = m_localTextInput->text();
+    if (!text.isEmpty()) {
+        qInfo() << "Local text input submitted via clipboard paste:"
+                << "serial=" << m_serial
+                << "textLength=" << text.length();
+        emit device->setDeviceClipboardText(text, true);
+    }
+
+    hideLocalTextInputOverlay(true);
+}
+
 void VideoForm::reloadViewControlSeparationConfig()
 {
     const QString iniPath = resolveUserDataIniPath();
@@ -881,25 +1406,19 @@ void VideoForm::reloadViewControlSeparationConfig()
 #endif
 
     const QString serial = m_serial.trimmed();
-    auto readIntWithSerialOverride = [&](const QString &key, int defaultValue) -> int {
-        bool ok = false;
-        if (!serial.isEmpty()) {
-            const QString serialPath = QString("%1/%2").arg(serial).arg(key);
-            const QVariant serialValue = settings.value(serialPath);
-            if (serialValue.isValid()) {
-                const int parsed = serialValue.toInt(&ok);
-                if (ok) {
-                    return parsed;
-                }
-            }
-        }
-        const int parsed = settings.value(QString("common/%1").arg(key), defaultValue).toInt(&ok);
-        return ok ? parsed : defaultValue;
-    };
-
     m_videoEnabled = settings.value("common/VideoEnabled", true).toBool();
     m_lockDirectionIndex = settings.value("common/LockDirectionIndex", 0).toInt();
-    m_videoCenterCropSize = qMax(0, readIntWithSerialOverride("VideoCenterCropSize", 0));
+    m_videoCenterCropSize = 0;
+    if (!serial.isEmpty()) {
+        bool cropOk = false;
+        const QVariant serialCropValue = settings.value(QString("%1/%2").arg(serial, "VideoCenterCropSize"));
+        if (serialCropValue.isValid()) {
+            m_videoCenterCropSize = serialCropValue.toInt(&cropOk);
+            if (!cropOk || m_videoCenterCropSize <= 0) {
+                m_videoCenterCropSize = 0;
+            }
+        }
+    }
     m_controlMapToScreen = m_videoEnabled && m_videoCenterCropSize > 0;
     m_videoSessionFirstFrameLogged = false;
     resetOrientationProbeState();
@@ -921,6 +1440,20 @@ void VideoForm::reloadViewControlSeparationConfig()
         stopOrientationPolling();
     } else {
         startOrientationPollingIfNeeded();
+    }
+}
+
+void VideoForm::releaseGrabbedCursorState()
+{
+    m_cursorGrabbed = false;
+    hideLocalTextInputOverlay(false);
+
+    QRect rc = getGrabCursorRect();
+    MouseTap::getInstance()->enableMouseEventTap(rc, false);
+    setRawInputActive(false);
+
+    while (QGuiApplication::overrideCursor()) {
+        QGuiApplication::restoreOverrideCursor();
     }
 }
 
@@ -1604,6 +2137,11 @@ void VideoForm::staysOnTop(bool top)
 
 void VideoForm::mousePressEvent(QMouseEvent *event)
 {
+    if (isKeymapEditorActive()) {
+        event->accept();
+        return;
+    }
+
     auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
     if (event->button() == Qt::MiddleButton) {
         if (device && !device->isCurrentCustomKeymap()) {
@@ -1652,6 +2190,11 @@ void VideoForm::mousePressEvent(QMouseEvent *event)
 
 void VideoForm::mouseReleaseEvent(QMouseEvent *event)
 {
+    if (isKeymapEditorActive()) {
+        event->accept();
+        return;
+    }
+
     auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
     if (m_dragPosition.isNull()) {
         if (!device) {
@@ -1687,6 +2230,11 @@ void VideoForm::mouseReleaseEvent(QMouseEvent *event)
 
 void VideoForm::mouseMoveEvent(QMouseEvent *event)
 {
+    if (isKeymapEditorActive()) {
+        event->accept();
+        return;
+    }
+
 #if (QT_VERSION < QT_VERSION_CHECK(6, 0, 0))
         QPointF localPos = event->localPos();
         QPointF globalPos = event->globalPos();
@@ -1754,6 +2302,11 @@ bool VideoForm::nativeEvent(const QByteArray &eventType, void *message, qintptr 
 
 void VideoForm::mouseDoubleClickEvent(QMouseEvent *event)
 {
+    if (isKeymapEditorActive()) {
+        event->accept();
+        return;
+    }
+
     auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
     if (event->button() == Qt::LeftButton && !m_videoWidget->geometry().contains(event->pos())) {
         if (!isMaximized()) {
@@ -1784,6 +2337,11 @@ void VideoForm::mouseDoubleClickEvent(QMouseEvent *event)
 
 void VideoForm::wheelEvent(QWheelEvent *event)
 {
+    if (isKeymapEditorActive()) {
+        event->accept();
+        return;
+    }
+
     auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
 #if QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
     if (m_videoWidget->geometry().contains(event->position().toPoint())) {
@@ -1810,6 +2368,11 @@ void VideoForm::wheelEvent(QWheelEvent *event)
 
 void VideoForm::keyPressEvent(QKeyEvent *event)
 {
+    if (isKeymapEditorActive()) {
+        event->accept();
+        return;
+    }
+
     auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
     if (!device) {
         return;
@@ -1823,6 +2386,11 @@ void VideoForm::keyPressEvent(QKeyEvent *event)
 
 void VideoForm::keyReleaseEvent(QKeyEvent *event)
 {
+    if (isKeymapEditorActive()) {
+        event->accept();
+        return;
+    }
+
     auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
     if (!device) {
         return;
@@ -1846,8 +2414,11 @@ void VideoForm::paintEvent(QPaintEvent *paint)
 void VideoForm::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
+    applyTheme();
     ui->keepRatioWidget->relayoutNow();
     applyVideoCanvasLayout();
+    positionLocalTextInput();
+    positionKeymapEditorUi();
     if (m_pendingVideoWidgetReveal && m_videoWidget) {
         if (m_loadingWidget) {
             m_loadingWidget->close();
@@ -1868,6 +2439,8 @@ void VideoForm::resizeEvent(QResizeEvent *event)
     QWidget::resizeEvent(event);
     updateNoVideoOverlay();
     ui->keepRatioWidget->relayoutNow();
+    positionLocalTextInput();
+    positionKeymapEditorUi();
     if (isVisible() && m_streamFrameSize.isValid()) {
         applyVideoCanvasLayout();
         if (m_pendingVideoWidgetReveal && m_videoWidget) {
@@ -1907,6 +2480,8 @@ void VideoForm::resizeEvent(QResizeEvent *event)
 void VideoForm::closeEvent(QCloseEvent *event)
 {
     Q_UNUSED(event)
+    shutdownKeymapEditor(false);
+    releaseGrabbedCursorState();
     stopOrientationPolling();
     auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
     if (!device) {

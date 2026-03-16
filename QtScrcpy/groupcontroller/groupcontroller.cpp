@@ -337,6 +337,21 @@ void GroupController::postTextInput(QString &text)
     }
 }
 
+void GroupController::setDeviceClipboardText(QString &text, bool paste)
+{
+    for (const auto& serial : m_devices) {
+        if (true == isHost(serial)) {
+            continue;
+        }
+        auto device = qsc::IDeviceManage::getInstance().getDevice(serial);
+        if (!device) {
+            continue;
+        }
+
+        device->setDeviceClipboardText(text, paste);
+    }
+}
+
 void GroupController::requestDeviceClipboard()
 {
     for (const auto& serial : m_devices) {

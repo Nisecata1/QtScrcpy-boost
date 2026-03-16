@@ -8,9 +8,12 @@
 #include <QSystemTrayIcon>
 #include <QListWidget>
 #include <QTimer>
+#include <QHash>
+#include <QKeySequence>
 
 
 #include "adbprocess.h"
+#include "config.h"
 #include "../QtScrcpyCore/include/QtScrcpyCore.h"
 #include "audio/audiooutput.h"
 
@@ -20,6 +23,14 @@ namespace Ui
 }
 
 class QYUVOpenGLWidget;
+class VideoForm;
+class QCheckBox;
+class QComboBox;
+class QGroupBox;
+class QLabel;
+class QSpinBox;
+class QToolButton;
+class QWidget;
 class Dialog : public QWidget
 {
     Q_OBJECT
@@ -39,6 +50,7 @@ private slots:
     void on_updateDevice_clicked();
     void on_startServerBtn_clicked();
     void on_stopServerBtn_clicked();
+    void on_restartServerBtn_clicked();
     void onRestartDeviceRequested(const QString &serial);
     void on_wirelessConnectBtn_clicked();
     void on_startAdbdBtn_clicked();
@@ -54,13 +66,13 @@ private slots:
     void on_refreshGameScriptBtn_clicked();
     void on_applyScriptBtn_clicked();
     void on_recordScreenCheck_clicked(bool checked);
-    void on_centerCropCheck_toggled(bool checked);
+    void on_localTextInputCheck_toggled(bool checked);
+    void on_localTextInputShortcutEdit_keySequenceChanged(const QKeySequence &keySequence);
     void on_usbConnectBtn_clicked();
     void on_wifiConnectBtn_clicked();
     void on_connectedPhoneList_itemDoubleClicked(QListWidgetItem *item);
     void on_updateNameBtn_clicked();
     void on_useSingleModeCheck_clicked();
-    void on_serialBox_currentIndexChanged(const QString &arg1);
 
     void on_startAudioBtn_clicked();
 
@@ -71,26 +83,44 @@ private slots:
     void on_autoUpdatecheckBox_toggled(bool checked);
 
     void showIpEditMenu(const QPoint &pos);
+    void onSelectedDeviceMouseConfigEdited();
+    void onSelectedDeviceMaxFpsConfigEdited();
+    void onSelectedDeviceCenterCropConfigEdited();
+    void onGlobalMaxFpsValueChanged(int value);
+    void onThemeModeChanged(int index);
 
 private:
     bool checkAdbRun();
     void initUI();
+    void initSelectedDeviceConfigUi();
     void updateBootConfig(bool toView = true);
     void execAdbCmd();
     void delayMs(int ms);
     QString getGameScript(const QString &fileName);
+    QString getGameScriptPath(const QString &fileName) const;
     void slotActivated(QSystemTrayIcon::ActivationReason reason);
     int findDeviceFromeSerialBox(bool wifi);
     quint32 getBitRate();
     qsc::DeviceParams buildDeviceParams(const QString &serial);
     const QString &getServerPath();
+    void applyLocalTextInputConfigToOpenVideoForms();
+    void updateVideoFormScriptBinding(const QString &serial, const QString &scriptFilePath, const QString &scriptDisplayName, const QString &scriptJson);
     void loadIpHistory();
     void saveIpHistory(const QString &ip);
     void loadPortHistory();
     void savePortHistory(const QString &port);
     void restartApplication();
-
     void showPortEditMenu(const QPoint &pos);
+    void handleSelectedSerialChanged(const QString &serial);
+    void updateSelectedDeviceConfigUi(const QString &serial);
+    void updateSelectedDeviceConfigControlState();
+    void setMouseConfigExpanded(bool expanded);
+    void saveSelectedDeviceMouseConfig();
+    void saveSelectedDeviceMaxFpsConfig();
+    void saveSelectedDeviceCenterCropConfig();
+    ThemeMode currentThemeModeSelection() const;
+    QString currentSelectedSerial() const;
+    QString formatSelectedDeviceDisplayName(const QString &serial) const;
 
 protected:
     void closeEvent(QCloseEvent *event);
@@ -105,6 +135,25 @@ private:
     QAction *m_quit;
     AudioOutput m_audioOutput;
     QTimer m_autoUpdatetimer;
+    QHash<QString, QPointer<VideoForm>> m_videoForms;
+    QComboBox *m_themeModeBox = nullptr;
+    QGroupBox *m_selectedDeviceConfigGroup = nullptr;
+    QLabel *m_selectedDeviceSerialValue = nullptr;
+    QCheckBox *m_deviceCenterCropCheck = nullptr;
+    QSpinBox *m_deviceCenterCropSizeSpin = nullptr;
+    QSpinBox *m_deviceMaxFpsSpin = nullptr;
+    QCheckBox *m_deviceMaxFpsOverrideCheck = nullptr;
+    QToolButton *m_mouseConfigToggleBtn = nullptr;
+    QWidget *m_mouseConfigContent = nullptr;
+    QCheckBox *m_renderRemoteCursorCheck = nullptr;
+    QSpinBox *m_cursorSizeSpin = nullptr;
+    QCheckBox *m_normalMouseCompatEnabledCheck = nullptr;
+    QCheckBox *m_normalMouseTouchPriorityEnabledCheck = nullptr;
+    QCheckBox *m_normalMouseCursorThrottleEnabledCheck = nullptr;
+    QSpinBox *m_normalMouseCursorFlushIntervalSpin = nullptr;
+    QSpinBox *m_normalMouseCursorClickSuppressionSpin = nullptr;
+    QSpinBox *m_normalMouseTapMinHoldSpin = nullptr;
+    bool m_updatingSelectedDeviceConfigUi = false;
 };
 
 #endif // DIALOG_H

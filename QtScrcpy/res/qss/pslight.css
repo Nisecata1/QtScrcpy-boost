@@ -1,0 +1,150 @@
+QWidget {
+    color: #1F2328;
+}
+
+QWidget[form="true"], QLabel[frameShape="1"] {
+    border: 1px solid #CDD3DA;
+    border-radius: 0px;
+}
+
+QWidget[form="bottom"] {
+    background: #F6F8FA;
+}
+
+QWidget[form="bottom"] .QFrame {
+    border: 1px solid #D0D7DE;
+}
+
+QWidget[form="bottom"] QLabel, QWidget[form="title"] QLabel {
+    border-radius: 0px;
+    color: #1F2328;
+    background: transparent;
+    border-style: none;
+}
+
+QWidget[form="title"], QWidget[nav="left"], QWidget[nav="top"] QAbstractButton {
+    border-style: none;
+    border-radius: 0px;
+    padding: 5px;
+    color: #1F2328;
+    background: qlineargradient(spread:pad, x1:0, y1:0, x2:0, y2:1, stop:0 #FFFFFF, stop:1 #EDEFF2);
+}
+
+QWidget[nav="top"] QAbstractButton:hover, QWidget[nav="top"] QAbstractButton:pressed, QWidget[nav="top"] QAbstractButton:checked {
+    border-style: solid;
+    border-width: 0px 0px 2px 0px;
+    padding: 4px 4px 2px 4px;
+    border-color: #0B84F3;
+    background: qlineargradient(spread:pad, x1:0, y1:0, x2:0, y2:1, stop:0 #FFFFFF, stop:1 #DDE7F2);
+}
+
+QWidget[nav="left"] QAbstractButton {
+    background: transparent;
+    border-style: none;
+}
+
+QWidget[nav="left"] QAbstractButton:hover {
+    color: #FFFFFF;
+    background-color: #0B84F3;
+}
+
+QWidget[nav="left"] QAbstractButton:checked, QWidget[nav="left"] QAbstractButton:pressed {
+    color: #1F2328;
+    border-style: solid;
+    border-width: 0px 0px 0px 2px;
+    padding: 4px 4px 4px 2px;
+    border-color: #0B84F3;
+    background-color: #EEF2F6;
+}
+
+QWidget[video="true"] QLabel {
+    color: #1F2328;
+    border: 1px solid #CDD3DA;
+    background: qlineargradient(spread:pad, x1:0, y1:0, x2:0, y2:1, stop:0 #FFFFFF, stop:1 #EEF2F6);
+}
+
+QWidget[video="true"] QLabel:focus {
+    border: 1px solid #0B84F3;
+    background: qlineargradient(spread:pad, x1:0, y1:0, x2:0, y2:1, stop:0 #FFFFFF, stop:1 #DDE7F2);
+}
+
+QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox, QComboBox, QDateEdit, QTimeEdit, QDateTimeEdit {
+    border: 1px solid #CDD3DA;
+    border-radius: 3px;
+    padding: 2px;
+    background: #FFFFFF;
+    selection-background-color: #CDE8FF;
+    selection-color: #1F2328;
+}
+
+QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus, QDateEdit:focus, QTimeEdit:focus, QDateTimeEdit:focus,
+QLineEdit:hover, QTextEdit:hover, QPlainTextEdit:hover, QSpinBox:hover, QDoubleSpinBox:hover, QComboBox:hover, QDateEdit:hover, QTimeEdit:hover, QDateTimeEdit:hover {
+    border: 1px solid #0B84F3;
+}
+
+QPushButton, QToolButton {
+    color: #1F2328;
+    background: qlineargradient(spread:pad, x1:0, y1:0, x2:0, y2:1, stop:0 #FFFFFF, stop:1 #EDEFF2);
+    border: 1px solid #CDD3DA;
+    border-radius: 4px;
+    padding: 4px 8px;
+}
+
+QPushButton:hover, QToolButton:hover {
+    border-color: #0B84F3;
+    background: #F3F8FF;
+}
+
+QPushButton:pressed, QToolButton:pressed, QPushButton:checked, QToolButton:checked {
+    background: #DDEBFA;
+}
+
+QPushButton:disabled, QToolButton:disabled {
+    color: #8C959F;
+    background: #F3F4F6;
+}
+
+QCheckBox, QRadioButton, QLabel, QGroupBox, QListWidget, QTreeWidget, QTableView {
+    color: #1F2328;
+}
+
+QGroupBox {
+    border: 1px solid #CDD3DA;
+    border-radius: 4px;
+    margin-top: 8px;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 8px;
+    padding: 0 4px;
+}
+
+QListWidget, QTreeWidget, QTableView, QTextBrowser {
+    border: 1px solid #CDD3DA;
+    background: #FFFFFF;
+    alternate-background-color: #F6F8FA;
+}
+
+QListWidget::item:selected, QTreeWidget::item:selected, QTableView::item:selected {
+    background: #DDEBFA;
+    color: #1F2328;
+}
+
+QMenu {
+    background: #FFFFFF;
+    border: 1px solid #CDD3DA;
+}
+
+QMenu::item:selected {
+    background: #E9F3FF;
+}
+
+QScrollBar:vertical, QScrollBar:horizontal {
+    background: #EEF2F6;
+}
+
+QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
+    background: #C5CDD6;
+    border-radius: 3px;
+}

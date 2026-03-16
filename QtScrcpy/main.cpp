@@ -13,6 +13,7 @@
 
 #include "config.h"
 #include "dialog.h"
+#include "thememanager.h"
 #include "mousetap/mousetap.h"
 
 static Dialog *g_mainDlg = Q_NULLPTR;
@@ -126,15 +127,7 @@ int main(int argc, char *argv[])
     MouseTap::getInstance()->initMouseEventTap();
 #endif
 
-    // load style sheet
-    QFile file(":/qss/psblack.css");
-    if (file.open(QFile::ReadOnly)) {
-        QString qss = QLatin1String(file.readAll());
-        QString paletteColor = qss.mid(20, 7);
-        qApp->setPalette(QPalette(QColor(paletteColor)));
-        qApp->setStyleSheet(qss);
-        file.close();
-    }
+    ThemeManager::getInstance().initialize(&a);
 
     qsc::AdbProcess::setAdbPath(Config::getInstance().getAdbPath());
 

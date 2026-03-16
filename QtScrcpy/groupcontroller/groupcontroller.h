@@ -36,6 +36,7 @@ private:
     void collapsePanel() override;
     void postBackOrScreenOn(bool down) override;
     void postTextInput(QString &text) override;
+    void setDeviceClipboardText(QString &text, bool paste = true) override;
     void requestDeviceClipboard() override;
     void setDeviceClipboard(bool pause = true) override;
     void clipboardPaste() override;

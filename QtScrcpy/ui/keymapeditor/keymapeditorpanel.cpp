@@ -1,0 +1,576 @@
+#include "keymapeditorpanel.h"
+
+#include <QApplication>
+#include <QCheckBox>
+#include <QCloseEvent>
+#include <QComboBox>
+#include <QEvent>
+#include <QFormLayout>
+#include <QFrame>
+#include <QHBoxLayout>
+#include <QHideEvent>
+#include <QKeyEvent>
+#include <QLabel>
+#include <QLineEdit>
+#include <QListWidget>
+#include <QMouseEvent>
+#include <QPushButton>
+#include <QShortcut>
+#include <QSignalBlocker>
+#include <QSpinBox>
+#include <QTimer>
+#include <QVBoxLayout>
+
+#include "keymapkeycodec.h"
+#include "thememanager.h"
+
+#ifdef Q_OS_WIN32
+#include "../../util/winutils.h"
+#include <Windows.h>
+#endif
+
+namespace {
+QString nodeTypeLabel(KeymapEditorDocument::NodeType type)
+{
+    switch (type) {
+    case KeymapEditorDocument::NodeMouseMove:
+        return QStringLiteral("Mouse Look");
+    case KeymapEditorDocument::NodeClick:
+        return QStringLiteral("Single Click");
+    case KeymapEditorDocument::NodeSteerWheel:
+        return QStringLiteral("Steer Wheel");
+    case KeymapEditorDocument::NodeDrag:
+        return QStringLiteral("Drag");
+    case KeymapEditorDocument::NodeAndroidKey:
+        return QStringLiteral("Android Key");
+    default:
+        return QStringLiteral("Unknown");
+    }
+}
+}
+
+KeymapEditorPanel::KeymapEditorPanel(QWidget *parent)
+    : QWidget(parent)
+{
+    setObjectName(QStringLiteral("keymapEditorPanel"));
+    setWindowFlags(windowFlags() | Qt::Tool | Qt::WindowTitleHint | Qt::WindowCloseButtonHint);
+    setWindowModality(Qt::NonModal);
+    setMinimumSize(320, 320);
+    resize(340, 520);
+    setWindowTitle(QStringLiteral("Keymap Editor"));
+    setFocusPolicy(Qt::StrongFocus);
+
+    QVBoxLayout *rootLayout = new QVBoxLayout(this);
+    rootLayout->setContentsMargins(12, 12, 12, 12);
+    rootLayout->setSpacing(8);
+
+    m_titleLabel = new QLabel(this);
+    m_titleLabel->setText(QStringLiteral("Keymap Editor"));
+    rootLayout->addWidget(m_titleLabel);
+
+    m_nodeList = new QListWidget(this);
+    rootLayout->addWidget(m_nodeList, 1);
+
+    QHBoxLayout *addLayout = new QHBoxLayout();
+    m_addTypeBox = new QComboBox(this);
+    m_addTypeBox->addItem(nodeTypeLabel(KeymapEditorDocument::NodeClick), KeymapEditorDocument::NodeClick);
+    m_addTypeBox->addItem(nodeTypeLabel(KeymapEditorDocument::NodeDrag), KeymapEditorDocument::NodeDrag);
+    m_addTypeBox->addItem(nodeTypeLabel(KeymapEditorDocument::NodeSteerWheel), KeymapEditorDocument::NodeSteerWheel);
+    m_addTypeBox->addItem(nodeTypeLabel(KeymapEditorDocument::NodeAndroidKey), KeymapEditorDocument::NodeAndroidKey);
+    m_addTypeBox->addItem(nodeTypeLabel(KeymapEditorDocument::NodeMouseMove), KeymapEditorDocument::NodeMouseMove);
+    m_addNodeBtn = new QPushButton(QStringLiteral("Add"), this);
+    addLayout->addWidget(m_addTypeBox, 1);
+    addLayout->addWidget(m_addNodeBtn);
+    rootLayout->addLayout(addLayout);
+
+    m_deleteNodeBtn = new QPushButton(QStringLiteral("Delete Node"), this);
+    rootLayout->addWidget(m_deleteNodeBtn);
+
+    QFrame *separator = new QFrame(this);
+    separator->setProperty("themeSeparator", true);
+    separator->setFrameShape(QFrame::HLine);
+    rootLayout->addWidget(separator);
+
+    QFormLayout *formLayout = new QFormLayout();
+    formLayout->setLabelAlignment(Qt::AlignLeft);
+    formLayout->setFormAlignment(Qt::AlignTop);
+
+    m_commentEdit = new QLineEdit(this);
+    formLayout->addRow(QStringLiteral("Comment"), m_commentEdit);
+
+    m_alwaysActiveCheck = new QCheckBox(QStringLiteral("Always Active"), this);
+    formLayout->addRow(QString(), m_alwaysActiveCheck);
+
+    m_switchMapCheck = new QCheckBox(QStringLiteral("Switch Map"), this);
+    formLayout->addRow(QString(), m_switchMapCheck);
+
+    auto makeRecordRow = [this](QLineEdit *&edit, QPushButton *&button, const QString &buttonText) -> QWidget * {
+        QWidget *rowWidget = new QWidget(this);
+        QHBoxLayout *rowLayout = new QHBoxLayout(rowWidget);
+        rowLayout->setContentsMargins(0, 0, 0, 0);
+        rowLayout->setSpacing(6);
+        edit = new QLineEdit(rowWidget);
+        edit->setReadOnly(true);
+        button = new QPushButton(buttonText, rowWidget);
+        rowLayout->addWidget(edit, 1);
+        rowLayout->addWidget(button);
+        return rowWidget;
+    };
+
+    formLayout->addRow(QStringLiteral("Primary Key"), makeRecordRow(m_primaryKeyEdit, m_primaryRecordBtn, QStringLiteral("Record")));
+    formLayout->addRow(QStringLiteral("Left Key"), makeRecordRow(m_leftKeyEdit, m_leftRecordBtn, QStringLiteral("Record")));
+    formLayout->addRow(QStringLiteral("Right Key"), makeRecordRow(m_rightKeyEdit, m_rightRecordBtn, QStringLiteral("Record")));
+    formLayout->addRow(QStringLiteral("Up Key"), makeRecordRow(m_upKeyEdit, m_upRecordBtn, QStringLiteral("Record")));
+    formLayout->addRow(QStringLiteral("Down Key"), makeRecordRow(m_downKeyEdit, m_downRecordBtn, QStringLiteral("Record")));
+
+    m_androidKeySpin = new QSpinBox(this);
+    m_androidKeySpin->setRange(0, 500);
+    formLayout->addRow(QStringLiteral("Android Key"), m_androidKeySpin);
+
+    m_primaryPosLabel = new QLabel(this);
+    m_secondaryPosLabel = new QLabel(this);
+    m_smallEyesPosLabel = new QLabel(this);
+    formLayout->addRow(QStringLiteral("Primary Pos"), m_primaryPosLabel);
+    formLayout->addRow(QStringLiteral("Secondary Pos"), m_secondaryPosLabel);
+    formLayout->addRow(QStringLiteral("SmallEyes Pos"), m_smallEyesPosLabel);
+
+    rootLayout->addLayout(formLayout);
+
+    m_recordingHintLabel = new QLabel(this);
+    m_recordingHintLabel->hide();
+    rootLayout->addWidget(m_recordingHintLabel);
+
+    QHBoxLayout *bottomLayout = new QHBoxLayout();
+    m_saveBtn = new QPushButton(QStringLiteral("Save && Apply"), this);
+    m_discardBtn = new QPushButton(QStringLiteral("Discard"), this);
+    bottomLayout->addWidget(m_saveBtn, 1);
+    bottomLayout->addWidget(m_discardBtn, 1);
+    rootLayout->addLayout(bottomLayout);
+
+    connect(m_nodeList, &QListWidget::currentRowChanged, this, [this](int row) {
+        if (row < 0 || !m_document || row >= m_document->nodeInfos().size()) {
+            m_selectedNodeId = -1;
+            emit nodeSelected(-1);
+            refreshSelection();
+            return;
+        }
+        const QVector<KeymapEditorDocument::NodeInfo> nodes = m_document->nodeInfos();
+        m_selectedNodeId = nodes.at(row).id;
+        emit nodeSelected(m_selectedNodeId);
+        refreshSelection();
+    });
+
+    connect(m_addNodeBtn, &QPushButton::clicked, this, [this]() {
+        if (!m_document) {
+            return;
+        }
+        const KeymapEditorDocument::NodeType type = static_cast<KeymapEditorDocument::NodeType>(m_addTypeBox->currentData().toInt());
+        const int nodeId = m_document->createNode(type, QPointF(0.5, 0.5));
+        if (nodeId >= 0) {
+            setSelectedNodeId(nodeId);
+        }
+    });
+    connect(m_deleteNodeBtn, &QPushButton::clicked, this, [this]() {
+        if (!m_document || m_selectedNodeId < 0) {
+            return;
+        }
+        if (m_document->deleteNode(m_selectedNodeId)) {
+            m_selectedNodeId = -1;
+            emit nodeSelected(-1);
+        }
+    });
+    connect(m_commentEdit, &QLineEdit::textEdited, this, [this](const QString &text) {
+        if (m_document && m_selectedNodeId >= 0) {
+            m_document->setComment(m_selectedNodeId, text);
+        }
+    });
+    connect(m_alwaysActiveCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        if (m_document && m_selectedNodeId >= 0) {
+            m_document->setAlwaysActive(m_selectedNodeId, checked);
+        }
+    });
+    connect(m_switchMapCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        if (m_document && m_selectedNodeId >= 0) {
+            m_document->setSwitchMap(m_selectedNodeId, checked);
+        }
+    });
+    connect(m_androidKeySpin, static_cast<void (QSpinBox::*)(int)>(&QSpinBox::valueChanged), this, [this](int value) {
+        if (m_document && m_selectedNodeId >= 0) {
+            m_document->setAndroidKey(m_selectedNodeId, value);
+        }
+    });
+
+    connect(m_primaryRecordBtn, &QPushButton::clicked, this, [this]() {
+        setRecordingState(true, m_selectedNodeId, KeymapEditorDocument::BindingPrimary, QStringLiteral("Press key or mouse button for primary binding"));
+    });
+    connect(m_leftRecordBtn, &QPushButton::clicked, this, [this]() {
+        setRecordingState(true, m_selectedNodeId, KeymapEditorDocument::BindingSteerLeft, QStringLiteral("Press key or mouse button for left binding"));
+    });
+    connect(m_rightRecordBtn, &QPushButton::clicked, this, [this]() {
+        setRecordingState(true, m_selectedNodeId, KeymapEditorDocument::BindingSteerRight, QStringLiteral("Press key or mouse button for right binding"));
+    });
+    connect(m_upRecordBtn, &QPushButton::clicked, this, [this]() {
+        setRecordingState(true, m_selectedNodeId, KeymapEditorDocument::BindingSteerUp, QStringLiteral("Press key or mouse button for up binding"));
+    });
+    connect(m_downRecordBtn, &QPushButton::clicked, this, [this]() {
+        setRecordingState(true, m_selectedNodeId, KeymapEditorDocument::BindingSteerDown, QStringLiteral("Press key or mouse button for down binding"));
+    });
+    connect(m_saveBtn, &QPushButton::clicked, this, &KeymapEditorPanel::saveRequested);
+    connect(m_discardBtn, &QPushButton::clicked, this, &KeymapEditorPanel::discardRequested);
+
+    m_closeShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+E")), this);
+    m_closeShortcut->setAutoRepeat(false);
+    connect(m_closeShortcut, &QShortcut::activated, this, [this]() {
+        setRecordingState(false);
+        emit closeRequested();
+    });
+
+    connect(&ThemeManager::getInstance(), &ThemeManager::themeChanged, this, [this]() {
+        applyTheme();
+    });
+    applyTheme();
+    refreshSelection();
+}
+
+KeymapEditorPanel::~KeymapEditorPanel()
+{
+    setRecordingState(false);
+}
+
+void KeymapEditorPanel::setDocument(KeymapEditorDocument *document)
+{
+    if (m_document == document) {
+        return;
+    }
+
+    if (m_document) {
+        disconnect(m_document, nullptr, this, nullptr);
+    }
+
+    m_document = document;
+    if (m_document) {
+        connect(m_document, &KeymapEditorDocument::documentReset, this, &KeymapEditorPanel::rebuildNodeList);
+        connect(m_document, &KeymapEditorDocument::nodeListChanged, this, &KeymapEditorPanel::rebuildNodeList);
+        connect(m_document, &KeymapEditorDocument::nodeChanged, this, [this](int nodeId) {
+            if (nodeId == m_selectedNodeId) {
+                refreshSelection();
+            }
+            rebuildNodeList();
+        });
+        connect(m_document, &KeymapEditorDocument::dirtyChanged, this, [this](bool dirty) {
+            m_saveBtn->setText(dirty ? QStringLiteral("Save && Apply *") : QStringLiteral("Save && Apply"));
+        });
+    }
+    rebuildNodeList();
+}
+
+void KeymapEditorPanel::setSelectedNodeId(int nodeId)
+{
+    if (m_selectedNodeId == nodeId) {
+        return;
+    }
+    m_selectedNodeId = nodeId;
+    rebuildNodeList();
+    refreshSelection();
+}
+
+int KeymapEditorPanel::selectedNodeId() const
+{
+    return m_selectedNodeId;
+}
+
+void KeymapEditorPanel::setScriptDisplayName(const QString &displayName)
+{
+    const QString title = displayName.isEmpty() ? QStringLiteral("Keymap Editor") : QStringLiteral("Keymap Editor - %1").arg(displayName);
+    m_titleLabel->setText(title);
+    setWindowTitle(title);
+}
+
+bool KeymapEditorPanel::eventFilter(QObject *watched, QEvent *event)
+{
+    Q_UNUSED(watched)
+    if (!m_recordingActive || m_selectedNodeId < 0) {
+        return QWidget::eventFilter(watched, event);
+    }
+
+    switch (event->type()) {
+    case QEvent::ShortcutOverride: {
+        QKeyEvent *keyEvent = static_cast<QKeyEvent *>(event);
+        if (keyEvent && keyEvent->key() == Qt::Key_E && (keyEvent->modifiers() & Qt::ControlModifier)) {
+            event->accept();
+            return false;
+        }
+        event->accept();
+        return true;
+    }
+    case QEvent::KeyPress: {
+        QKeyEvent *keyEvent = static_cast<QKeyEvent *>(event);
+        if (keyEvent && keyEvent->key() == Qt::Key_E && (keyEvent->modifiers() & Qt::ControlModifier)) {
+            setRecordingState(false);
+            emit closeRequested();
+            event->accept();
+            return true;
+        }
+        if (keyEvent->isAutoRepeat()) {
+            event->accept();
+            return true;
+        }
+        const QString jsonKey = KeymapKeyCodec::encodeKey(keyEvent->key());
+        if (!jsonKey.isEmpty()) {
+            applyRecordedJsonKey(jsonKey);
+        }
+        event->accept();
+        return true;
+    }
+    case QEvent::KeyRelease:
+        event->accept();
+        return true;
+    case QEvent::MouseButtonPress: {
+        QMouseEvent *mouseEvent = static_cast<QMouseEvent *>(event);
+        const QString jsonKey = KeymapKeyCodec::encodeMouseButton(static_cast<int>(mouseEvent->button()));
+        if (!jsonKey.isEmpty()) {
+            applyRecordedJsonKey(jsonKey);
+        }
+        event->accept();
+        return true;
+    }
+    case QEvent::MouseButtonRelease:
+        event->accept();
+        return true;
+    default:
+        break;
+    }
+
+    return QWidget::eventFilter(watched, event);
+}
+
+void KeymapEditorPanel::hideEvent(QHideEvent *event)
+{
+    setRecordingState(false);
+    QWidget::hideEvent(event);
+}
+
+void KeymapEditorPanel::closeEvent(QCloseEvent *event)
+{
+    setRecordingState(false);
+    emit closeRequested();
+    if (event) {
+        event->ignore();
+    }
+}
+
+void KeymapEditorPanel::applyTheme()
+{
+    const bool darkTheme = ThemeManager::getInstance().isDarkTheme();
+    setStyleSheet(darkTheme
+        ? QStringLiteral(
+            "#keymapEditorPanel {"
+            " background: rgba(24, 24, 24, 228);"
+            " border: 1px solid rgba(255, 255, 255, 40);"
+            " border-radius: 10px;"
+            " color: #F2F2F2;"
+            "}"
+            "QLabel, QCheckBox, QPushButton { color: #F2F2F2; }"
+            "QLineEdit, QComboBox, QListWidget, QSpinBox {"
+            " background: rgba(40, 40, 40, 220);"
+            " color: #F2F2F2;"
+            " border: 1px solid rgba(255, 255, 255, 50);"
+            " border-radius: 6px;"
+            " padding: 4px;"
+            "}"
+            "QPushButton {"
+            " background: rgba(70, 70, 70, 220);"
+            " border: 1px solid rgba(255, 255, 255, 60);"
+            " border-radius: 6px;"
+            " padding: 4px 8px;"
+            "}"
+            "QPushButton:disabled { color: rgba(255,255,255,110); }"
+            "QFrame[themeSeparator=\"true\"] { color: rgba(255,255,255,40); }")
+        : QStringLiteral(
+            "#keymapEditorPanel {"
+            " background: rgba(248, 250, 252, 240);"
+            " border: 1px solid rgba(31, 35, 40, 38);"
+            " border-radius: 10px;"
+            " color: #1F2328;"
+            "}"
+            "QLabel, QCheckBox, QPushButton { color: #1F2328; }"
+            "QLineEdit, QComboBox, QListWidget, QSpinBox {"
+            " background: rgba(255, 255, 255, 236);"
+            " color: #1F2328;"
+            " border: 1px solid rgba(31, 35, 40, 46);"
+            " border-radius: 6px;"
+            " padding: 4px;"
+            "}"
+            "QPushButton {"
+            " background: rgba(241, 243, 245, 236);"
+            " border: 1px solid rgba(31, 35, 40, 46);"
+            " border-radius: 6px;"
+            " padding: 4px 8px;"
+            "}"
+            "QPushButton:disabled { color: rgba(31,35,40,110); }"
+            "QFrame[themeSeparator=\"true\"] { color: rgba(31,35,40,48); }"));
+
+#ifdef Q_OS_WIN32
+    WinUtils::setDarkBorderToWindow((HWND)winId(), darkTheme);
+#endif
+}
+
+void KeymapEditorPanel::rebuildNodeList()
+{
+    const QSignalBlocker blocker(m_nodeList);
+    m_nodeList->clear();
+    if (!m_document) {
+        refreshSelection();
+        return;
+    }
+
+    const QVector<KeymapEditorDocument::NodeInfo> nodes = m_document->nodeInfos();
+    int selectedRow = -1;
+    for (int i = 0; i < nodes.size(); ++i) {
+        const KeymapEditorDocument::NodeInfo &info = nodes.at(i);
+        QListWidgetItem *item = new QListWidgetItem(QStringLiteral("[%1] %2%3")
+            .arg(info.typeName, info.displayName, info.readOnly ? QStringLiteral(" (read-only)") : QString()), m_nodeList);
+        item->setData(Qt::UserRole, info.id);
+        if (info.id == m_selectedNodeId) {
+            selectedRow = i;
+        }
+    }
+    if (selectedRow >= 0) {
+        m_nodeList->setCurrentRow(selectedRow);
+    }
+    m_addNodeBtn->setEnabled(m_document != nullptr);
+    refreshSelection();
+}
+
+void KeymapEditorPanel::refreshSelection()
+{
+    KeymapEditorDocument::NodeInfo info;
+    if (m_document && m_selectedNodeId >= 0) {
+        info = m_document->nodeInfo(m_selectedNodeId);
+    }
+
+    const bool hasSelection = info.id >= 0;
+    const QSignalBlocker commentBlocker(m_commentEdit);
+    const QSignalBlocker alwaysActiveBlocker(m_alwaysActiveCheck);
+    const QSignalBlocker switchMapBlocker(m_switchMapCheck);
+    const QSignalBlocker androidKeyBlocker(m_androidKeySpin);
+
+    m_commentEdit->setText(info.comment);
+    m_alwaysActiveCheck->setChecked(info.alwaysActive);
+    m_switchMapCheck->setChecked(info.switchMap);
+    m_primaryKeyEdit->setText(KeymapKeyCodec::displayStringForJsonKey(info.primaryKey));
+    m_leftKeyEdit->setText(KeymapKeyCodec::displayStringForJsonKey(info.leftKey));
+    m_rightKeyEdit->setText(KeymapKeyCodec::displayStringForJsonKey(info.rightKey));
+    m_upKeyEdit->setText(KeymapKeyCodec::displayStringForJsonKey(info.upKey));
+    m_downKeyEdit->setText(KeymapKeyCodec::displayStringForJsonKey(info.downKey));
+    m_androidKeySpin->setValue(info.androidKey);
+    refreshPositionLabels(info);
+    refreshPropertyVisibility(info);
+
+    m_deleteNodeBtn->setEnabled(hasSelection && info.canDelete);
+    m_primaryRecordBtn->setEnabled(hasSelection && info.supportsPrimaryKey && !info.readOnly);
+    m_leftRecordBtn->setEnabled(hasSelection && info.supportsDirectionalKeys && !info.readOnly);
+    m_rightRecordBtn->setEnabled(hasSelection && info.supportsDirectionalKeys && !info.readOnly);
+    m_upRecordBtn->setEnabled(hasSelection && info.supportsDirectionalKeys && !info.readOnly);
+    m_downRecordBtn->setEnabled(hasSelection && info.supportsDirectionalKeys && !info.readOnly);
+    updateRecordingButtons();
+}
+
+void KeymapEditorPanel::refreshPropertyVisibility(const KeymapEditorDocument::NodeInfo &info)
+{
+    const bool hasSelection = info.id >= 0;
+    m_commentEdit->setEnabled(hasSelection && info.supportsComment && !info.readOnly);
+    m_alwaysActiveCheck->setVisible(hasSelection && info.supportsAlwaysActive);
+    m_alwaysActiveCheck->setEnabled(hasSelection && info.supportsAlwaysActive && !info.readOnly);
+    m_switchMapCheck->setVisible(hasSelection && info.supportsSwitchMap);
+    m_switchMapCheck->setEnabled(hasSelection && info.supportsSwitchMap && !info.readOnly);
+
+    m_primaryKeyEdit->parentWidget()->setVisible(hasSelection && info.supportsPrimaryKey);
+    m_leftKeyEdit->parentWidget()->setVisible(hasSelection && info.supportsDirectionalKeys);
+    m_rightKeyEdit->parentWidget()->setVisible(hasSelection && info.supportsDirectionalKeys);
+    m_upKeyEdit->parentWidget()->setVisible(hasSelection && info.supportsDirectionalKeys);
+    m_downKeyEdit->parentWidget()->setVisible(hasSelection && info.supportsDirectionalKeys);
+    m_androidKeySpin->setVisible(hasSelection && info.supportsAndroidKey);
+    m_androidKeySpin->parentWidget()->setVisible(hasSelection && info.supportsAndroidKey);
+    m_primaryPosLabel->setVisible(hasSelection && info.hasPrimaryPos);
+    m_secondaryPosLabel->setVisible(hasSelection && info.hasSecondaryPos);
+    m_smallEyesPosLabel->setVisible(hasSelection && info.hasSmallEyesPos);
+}
+
+void KeymapEditorPanel::refreshPositionLabels(const KeymapEditorDocument::NodeInfo &info)
+{
+    m_primaryPosLabel->setText(info.hasPrimaryPos ? formatPointLabel(info.primaryPos) : QStringLiteral("-"));
+    m_secondaryPosLabel->setText(info.hasSecondaryPos ? formatPointLabel(info.secondaryPos) : QStringLiteral("-"));
+    m_smallEyesPosLabel->setText(info.hasSmallEyesPos ? formatPointLabel(info.smallEyesPos) : QStringLiteral("-"));
+}
+
+void KeymapEditorPanel::setRecordingState(bool enabled, int nodeId, KeymapEditorDocument::KeyBindingField field, const QString &title)
+{
+    if (!enabled) {
+        if (m_recordingActive) {
+            qApp->removeEventFilter(this);
+        }
+        m_recordingActive = false;
+        m_recordingNodeId = -1;
+        m_recordingField = KeymapEditorDocument::BindingPrimary;
+        m_recordingHintLabel->hide();
+        m_recordingHintLabel->clear();
+        updateRecordingButtons();
+        return;
+    }
+
+    if (!m_document || nodeId < 0) {
+        return;
+    }
+
+    setRecordingState(false);
+    m_recordingNodeId = nodeId;
+    m_recordingField = field;
+    m_recordingActive = true;
+    m_recordingHintLabel->setText(title);
+    m_recordingHintLabel->show();
+    updateRecordingButtons();
+    QTimer::singleShot(0, this, [this]() {
+        if (m_recordingActive) {
+            qApp->installEventFilter(this);
+        }
+    });
+}
+
+void KeymapEditorPanel::applyRecordedJsonKey(const QString &jsonKey)
+{
+    if (!m_document || !m_recordingActive || m_recordingNodeId < 0) {
+        return;
+    }
+    m_document->setKeyBinding(m_recordingNodeId, m_recordingField, jsonKey);
+    setRecordingState(false);
+}
+
+void KeymapEditorPanel::updateRecordingButtons()
+{
+    const QString idleText = QStringLiteral("Record");
+    m_primaryRecordBtn->setText(m_recordingActive && m_recordingField == KeymapEditorDocument::BindingPrimary ? QStringLiteral("Listening...") : idleText);
+    m_leftRecordBtn->setText(m_recordingActive && m_recordingField == KeymapEditorDocument::BindingSteerLeft ? QStringLiteral("Listening...") : idleText);
+    m_rightRecordBtn->setText(m_recordingActive && m_recordingField == KeymapEditorDocument::BindingSteerRight ? QStringLiteral("Listening...") : idleText);
+    m_upRecordBtn->setText(m_recordingActive && m_recordingField == KeymapEditorDocument::BindingSteerUp ? QStringLiteral("Listening...") : idleText);
+    m_downRecordBtn->setText(m_recordingActive && m_recordingField == KeymapEditorDocument::BindingSteerDown ? QStringLiteral("Listening...") : idleText);
+}
+
+QString KeymapEditorPanel::formatPointLabel(const QPointF &point) const
+{
+    return QStringLiteral("(%1, %2)").arg(point.x(), 0, 'f', 3).arg(point.y(), 0, 'f', 3);
+}
+
+bool KeymapEditorPanel::hasMouseMoveNode() const
+{
+    if (!m_document) {
+        return false;
+    }
+    const QVector<KeymapEditorDocument::NodeInfo> nodes = m_document->nodeInfos();
+    for (int i = 0; i < nodes.size(); ++i) {
+        if (nodes.at(i).type == KeymapEditorDocument::NodeMouseMove) {
+            return true;
+        }
+    }
+    return false;
+}

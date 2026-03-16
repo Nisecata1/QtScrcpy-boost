@@ -1,11 +1,12 @@
 ﻿# 从模块中导入指定对象，供后续逻辑调用。
 from __future__ import annotations
 
-import mmap
+import ctypes
 import socket
 import struct
 import time
 # 从模块中导入指定对象，供后续逻辑调用。
+from ctypes import wintypes
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -42,6 +43,10 @@ HEADER_EXPECTED_BYTES = 48
 PIXEL_FORMAT_BGR24 = 1
 # 计算共享内存总长度（头 + 最大载荷）。
 MAPPING_SIZE = HEADER_EXPECTED_BYTES + MAX_PAYLOAD_BYTES
+# 定义 Windows 命名共享内存只读访问掩码。
+FILE_MAP_READ = 0x0004
+# 定义 OpenFileMappingW 文件不存在错误码。
+ERROR_FILE_NOT_FOUND = 2
 
 # 定义 UDP AI 增量包的小端打包格式。
 PACKET_FMT = "<IHHIff"
@@ -64,9 +69,28 @@ if HEADER_SIZE != HEADER_EXPECTED_BYTES:
 if PACKET_SIZE != 20:
     raise RuntimeError(f"UDP packet size mismatch: {PACKET_SIZE} != 20")
 
+# 配置 Windows 内核共享内存 API，要求仅读取已存在的映射。
+kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+kernel32.OpenFileMappingW.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR]
+kernel32.OpenFileMappingW.restype = wintypes.HANDLE
+kernel32.MapViewOfFile.argtypes = [
+    wintypes.HANDLE,
+    wintypes.DWORD,
+    wintypes.DWORD,
+    wintypes.DWORD,
+    ctypes.c_size_t,
+]
+kernel32.MapViewOfFile.restype = ctypes.c_void_p
+kernel32.UnmapViewOfFile.argtypes = [ctypes.c_void_p]
+kernel32.UnmapViewOfFile.restype = wintypes.BOOL
+kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+kernel32.CloseHandle.restype = wintypes.BOOL
+
 # ================= Runtime Config =================
 # 配置空转时让出 CPU 的睡眠时长（秒）。
 POLL_SLEEP_SEC = 0.001
+# 配置共享内存链路诊断日志节流周期（秒）。
+READER_DIAGNOSTIC_INTERVAL_SEC = 1.0
 # 配置性能监控总开关。
 PERF_MONITOR_ENABLED = False
 # 配置性能统计打印周期（秒）。
@@ -75,23 +99,23 @@ PERF_MONITOR_INTERVAL_SEC = 1.0
 # 配置当前使用的锁定参数预设档位。
 AIM_TUNE_PROFILE = "A"  # A / B / C
 # 配置动态 kp 的距离增益系数。
-AIM_KP_DIST_GAIN = 0.001
+AIM_KP_DIST_GAIN = 0.005
 # 定义不同档位的锁定参数集合。
 AIM_TUNE_PROFILES = {
    
     "A": {
         "label": "stable",
-        "kalman_enabled": True,
-        "base_kp": 0.015,
+        "kalman_enabled": False,
+        "base_kp": 0.02,
         "kp_max": 0.05,
-        "body_offset": 0.50,
+        "body_offset": 0.60,
     },
    
     "B": {
         "label": "follow",
         "kalman_enabled": True,
         "base_kp": 0.015,
-        "kp_max": 0.030,
+        "kp_max": 0.05,
         "body_offset": 0.26,
     },
    
@@ -366,37 +390,67 @@ class SharedVisionReader:
        
         self.mapping_size = mapping_size
        
-        self.mm: mmap.mmap | None = None
+        self.mapping_handle: int | None = None
+
+        self.mapping_view_addr: int | None = None
        
         self.last_frame_id = 0
 
     # 定义函数 _ensure_mapping，承载对应功能流程。
     def _ensure_mapping(self) -> bool:
         # 根据条件判断选择执行分支。
-        if self.mm is not None:
+        if self.mapping_view_addr is not None:
             # 返回当前结果并结束函数执行。
             return True
-        # 进入异常保护区，避免单点错误中断流程。
-        try:
-           
-            self.mm = mmap.mmap(-1, self.mapping_size, tagname=self.mapping_name, access=mmap.ACCESS_READ)
-            # 返回当前结果并结束函数执行。
-            return True
-        # 捕获异常并执行容错处理。
-        except OSError:
-           
-            self.mm = None
+
+        # 只打开已存在的共享内存，避免读端抢先创建空映射。
+        handle = kernel32.OpenFileMappingW(FILE_MAP_READ, False, self.mapping_name)
+        # 根据条件判断选择执行分支。
+        if not handle:
+            # 根据条件判断选择执行分支。
+            if ctypes.get_last_error() != ERROR_FILE_NOT_FOUND:
+               
+                self.close()
             # 返回当前结果并结束函数执行。
             return False
+
+        # 设置常量 view_addr 的默认值。
+        view_addr = kernel32.MapViewOfFile(handle, FILE_MAP_READ, 0, 0, self.mapping_size)
+        # 根据条件判断选择执行分支。
+        if not view_addr:
+           
+            kernel32.CloseHandle(handle)
+            # 返回当前结果并结束函数执行。
+            return False
+
+       
+        self.mapping_handle = int(handle)
+       
+        self.mapping_view_addr = int(view_addr)
+        # 返回当前结果并结束函数执行。
+        return True
+
+    # 定义函数 _read_bytes，承载对应功能流程。
+    def _read_bytes(self, offset: int, size: int) -> bytes:
+        # 断言关键前提，帮助快速发现异常状态。
+        assert self.mapping_view_addr is not None
+        # 返回当前结果并结束函数执行。
+        return ctypes.string_at(self.mapping_view_addr + offset, size)
 
     # 定义函数 close，承载对应功能流程。
     def close(self) -> None:
         # 根据条件判断选择执行分支。
-        if self.mm is not None:
+        if self.mapping_view_addr is not None:
            
-            self.mm.close()
+            kernel32.UnmapViewOfFile(ctypes.c_void_p(self.mapping_view_addr))
            
-            self.mm = None
+            self.mapping_view_addr = None
+        # 根据条件判断选择执行分支。
+        if self.mapping_handle is not None:
+           
+            kernel32.CloseHandle(wintypes.HANDLE(self.mapping_handle))
+           
+            self.mapping_handle = None
 
     # 定义函数 read_latest，承载对应功能流程。
     def read_latest(self) -> tuple[str, VisionFrame | None]:
@@ -406,17 +460,17 @@ class SharedVisionReader:
             return ReaderStatus.MAPPING_UNAVAILABLE, None
 
         # 断言关键前提，帮助快速发现异常状态。
-        assert self.mm is not None
+        assert self.mapping_view_addr is not None
 
         # 设置常量 seq1 的默认值。
-        seq1 = struct.unpack_from("<I", self.mm, SEQ_OFFSET)[0]
+        seq1 = struct.unpack_from("<I", self._read_bytes(SEQ_OFFSET, 4), 0)[0]
         # 根据条件判断选择执行分支。
         if seq1 & 1:
             # 返回当前结果并结束函数执行。
             return ReaderStatus.SEQ_UNSTABLE, None
 
         # 设置常量 header_blob 的默认值。
-        header_blob = self.mm[:HEADER_SIZE]
+        header_blob = self._read_bytes(0, HEADER_SIZE)
         # 开始多行表达式或复合结构。
         (
            
@@ -502,10 +556,10 @@ class SharedVisionReader:
             return ReaderStatus.HEADER_INVALID, None
 
         # 设置常量 payload 的默认值。
-        payload = self.mm[HEADER_SIZE:payload_end]
+        payload = self._read_bytes(HEADER_SIZE, payload_bytes)
 
         # 设置常量 seq2 的默认值。
-        seq2 = struct.unpack_from("<I", self.mm, SEQ_OFFSET)[0]
+        seq2 = struct.unpack_from("<I", self._read_bytes(SEQ_OFFSET, 4), 0)[0]
         # 根据条件判断选择执行分支。
         if seq1 != seq2 or (seq2 & 1):
             # 返回当前结果并结束函数执行。
@@ -544,6 +598,100 @@ class SharedVisionReader:
             # 设置常量 frame_bgr 的默认值。
             frame_bgr=frame_bgr,
         )
+
+
+# 定义类 ReaderDiagnostics，用于封装共享内存链路诊断输出。
+class ReaderDiagnostics:
+    # 定义函数 __init__，承载对应功能流程。
+    def __init__(self, interval_sec: float) -> None:
+       
+        self.interval_sec = interval_sec
+       
+        self.last_log_key = ""
+       
+        self.last_log_ts = 0.0
+       
+        self.last_ok_ts = 0.0
+       
+        self.awaiting_recovery = False
+       
+        self.has_seen_valid_frame = False
+
+    # 定义函数 on_status，承载对应功能流程。
+    def on_status(self, status: str) -> None:
+        # 设置常量 now 的默认值。
+        now = time.perf_counter()
+
+        # 根据条件判断选择执行分支。
+        if status == ReaderStatus.OK:
+            # 设置常量 should_report_recovery 的默认值。
+            should_report_recovery = self.awaiting_recovery or not self.has_seen_valid_frame
+           
+            self.last_ok_ts = now
+           
+            self.awaiting_recovery = False
+           
+            self.has_seen_valid_frame = True
+           
+            self.last_log_key = ""
+           
+            self.last_log_ts = 0.0
+            # 根据条件判断选择执行分支。
+            if should_report_recovery:
+                # 输出关键状态到控制台，便于运行期观测。
+                print("✅ Shared memory stream online, receiving frames from QtScrcpy.")
+            # 返回当前结果并结束函数执行。
+            return
+
+        # 设置常量 log_key 的默认值。
+        log_key = ""
+        # 设置常量 message 的默认值。
+        message = ""
+
+        # 根据条件判断选择执行分支。
+        if status == ReaderStatus.MAPPING_UNAVAILABLE:
+           
+            log_key = status
+           
+            message = f"⌛ Waiting for QtScrcpy to publish shared memory: {SHARED_MAPPING_NAME}"
+        # 在前置条件不满足时继续进行分支判断。
+        elif status == ReaderStatus.HEADER_INVALID:
+           
+            log_key = status
+           
+            message = (
+                "⚠️ Shared memory exists but header is invalid; QtScrcpy may not be writing "
+                "frames yet, or the mapping was created by an older reader."
+            )
+        # 在前置条件不满足时继续进行分支判断。
+        elif (
+           
+            status == ReaderStatus.FRAME_UNCHANGED
+           
+            and self.has_seen_valid_frame
+           
+            and (now - self.last_ok_ts) >= self.interval_sec
+        ):
+           
+            log_key = "stalled_frames"
+           
+            message = "⌛ Shared memory is online but no new frames have arrived yet."
+
+        # 根据条件判断选择执行分支。
+        if not message:
+            # 返回当前结果并结束函数执行。
+            return
+
+        # 根据条件判断选择执行分支。
+        if log_key != self.last_log_key or (now - self.last_log_ts) >= self.interval_sec:
+            # 输出关键状态到控制台，便于运行期观测。
+            print(message)
+           
+            self.last_log_key = log_key
+           
+            self.last_log_ts = now
+       
+        self.awaiting_recovery = True
 
 
 # 定义类 AiUdpSender，用于封装该职责模块。
@@ -821,6 +969,8 @@ def main_loop() -> None:
     aim = AimController(profile)
     # 设置常量 perf 的默认值。
     perf = PerfMonitor(PERF_MONITOR_ENABLED, PERF_MONITOR_INTERVAL_SEC)
+    # 设置常量 diagnostics 的默认值。
+    diagnostics = ReaderDiagnostics(READER_DIAGNOSTIC_INTERVAL_SEC)
 
     # 输出关键状态到控制台，便于运行期观测。
     print(f"🛰️ Shared memory: {SHARED_MAPPING_NAME}")
@@ -840,6 +990,8 @@ def main_loop() -> None:
             status, frame = reader.read_latest()
            
             perf.on_reader(status)
+           
+            diagnostics.on_status(status)
 
             # 根据条件判断选择执行分支。
             if status != ReaderStatus.OK or frame is None:

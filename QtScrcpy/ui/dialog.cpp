@@ -8,11 +8,22 @@
 #include <QRandomGenerator>
 #include <QTime>
 #include <QTimer>
+#include <QKeySequenceEdit>
 #include <QCoreApplication>
 #include <QDesktopServices>
 #include <QUrl>
+#include <QCheckBox>
+#include <QFormLayout>
+#include <QGroupBox>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QSignalBlocker>
+#include <QSpinBox>
+#include <QToolButton>
+#include <QVBoxLayout>
 
 #include "config.h"
+#include "thememanager.h"
 #include "dialog.h"
 #include "ui_dialog.h"
 #include "videoform.h"
@@ -75,13 +86,42 @@ Dialog::Dialog(QWidget *parent) : QWidget(parent), ui(new Ui::Widget)
         case qsc::AdbProcess::AER_SUCCESS_EXEC:
             //log = m_adb.getStdOut();
             if (args.contains("devices")) {
+                const QString previousSerial = currentSelectedSerial();
                 QStringList devices = m_adb.getDevicesSerialFromStdOut();
-                ui->serialBox->clear();
-                ui->connectedPhoneList->clear();
-                for (auto &item : devices) {
-                    ui->serialBox->addItem(item);
-                    ui->connectedPhoneList->addItem(Config::getInstance().getNickName(item) + "-" + item);
+
+                int selectedIndex = -1;
+                {
+                    const QSignalBlocker serialBlocker(ui->serialBox);
+                    const QSignalBlocker phoneListBlocker(ui->connectedPhoneList);
+
+                    ui->serialBox->clear();
+                    ui->connectedPhoneList->clear();
+                    for (auto &item : devices) {
+                        ui->serialBox->addItem(item);
+                        ui->connectedPhoneList->addItem(Config::getInstance().getNickName(item) + "-" + item);
+                    }
+
+                    if (!previousSerial.isEmpty()) {
+                        selectedIndex = ui->serialBox->findText(previousSerial);
+                    }
+                    if (selectedIndex < 0 && ui->serialBox->count() > 0) {
+                        selectedIndex = 0;
+                    }
+
+                    if (selectedIndex >= 0) {
+                        ui->serialBox->setCurrentIndex(selectedIndex);
+                        ui->connectedPhoneList->setCurrentRow(selectedIndex);
+                    } else {
+                        ui->serialBox->setCurrentIndex(-1);
+                        ui->connectedPhoneList->setCurrentRow(-1);
+                        ui->connectedPhoneList->clearSelection();
+                    }
                 }
+
+                const QString finalSerial = selectedIndex >= 0
+                    ? ui->serialBox->itemText(selectedIndex).trimmed()
+                    : QString();
+                handleSelectedSerialChanged(finalSerial);
             } else if (args.contains("show") && args.contains("wlan0")) {
                 QString ip = m_adb.getDeviceIPFromStdOut();
                 if (ip.isEmpty()) {
@@ -185,7 +225,7 @@ void Dialog::initUI()
 #endif
 
 #ifdef Q_OS_WIN32
-    WinUtils::setDarkBorderToWindow((HWND)this->winId(), true);
+    WinUtils::setDarkBorderToWindow((HWND)this->winId(), ThemeManager::getInstance().isDarkTheme());
 #endif
 
     ui->bitRateEdit->setValidator(new QIntValidator(1, 99999, this));
@@ -226,6 +266,484 @@ void Dialog::initUI()
         connect(ui->devicePortEdt->lineEdit(), &QWidget::customContextMenuRequested,
                 this, &Dialog::showPortEditMenu);
     }
+
+    auto configLayout = qobject_cast<QVBoxLayout *>(ui->configGroupBox->layout());
+    if (configLayout) {
+        auto *themeWidget = new QWidget(ui->configGroupBox);
+        auto *themeLayout = new QHBoxLayout(themeWidget);
+        themeLayout->setContentsMargins(0, 0, 0, 0);
+
+        auto *themeLabel = new QLabel(tr("主题模式："), themeWidget);
+        m_themeModeBox = new QComboBox(themeWidget);
+        m_themeModeBox->addItem(tr("跟随系统"), static_cast<int>(ThemeMode::System));
+        m_themeModeBox->addItem(tr("浅色"), static_cast<int>(ThemeMode::Light));
+        m_themeModeBox->addItem(tr("深色"), static_cast<int>(ThemeMode::Dark));
+        m_themeModeBox->setToolTip(tr("切换整个应用的主题外观，可选择跟随系统、浅色或深色。"));
+        themeLabel->setBuddy(m_themeModeBox);
+
+        themeLayout->addWidget(themeLabel);
+        themeLayout->addWidget(m_themeModeBox);
+        themeLayout->addStretch(1);
+        configLayout->insertWidget(0, themeWidget);
+    }
+
+    connect(ui->serialBox, &QComboBox::currentTextChanged,
+            this, &Dialog::handleSelectedSerialChanged);
+    connect(ui->maxFpsSpin, static_cast<void (QSpinBox::*)(int)>(&QSpinBox::valueChanged),
+            this, &Dialog::onGlobalMaxFpsValueChanged);
+    if (m_themeModeBox) {
+        connect(m_themeModeBox, static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
+                this, &Dialog::onThemeModeChanged);
+    }
+    connect(&ThemeManager::getInstance(), &ThemeManager::themeChanged, this, [this]() {
+#ifdef Q_OS_WIN32
+        WinUtils::setDarkBorderToWindow((HWND)this->winId(), ThemeManager::getInstance().isDarkTheme());
+#endif
+    });
+
+    initSelectedDeviceConfigUi();
+    handleSelectedSerialChanged(currentSelectedSerial());
+}
+
+void Dialog::initSelectedDeviceConfigUi()
+{
+    if (m_selectedDeviceConfigGroup) {
+        return;
+    }
+
+    auto rightLayout = qobject_cast<QVBoxLayout *>(ui->rightWidget->layout());
+    if (!rightLayout) {
+        return;
+    }
+
+    m_selectedDeviceConfigGroup = new QGroupBox(tr("设备独有板块"), ui->rightWidget);
+    m_selectedDeviceConfigGroup->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+
+    auto groupLayout = new QVBoxLayout(m_selectedDeviceConfigGroup);
+    groupLayout->setContentsMargins(5, 5, 5, 5);
+    groupLayout->setSpacing(4);
+
+    auto addLabeledMouseConfigRow = [this](QFormLayout *layout, const QString &labelText,
+                                           const QString &toolTip, QWidget *field) {
+        auto *label = new QLabel(labelText, m_mouseConfigContent);
+        label->setToolTip(toolTip);
+        field->setToolTip(toolTip);
+        layout->addRow(label, field);
+    };
+
+    auto selectedDeviceRow = new QHBoxLayout();
+    selectedDeviceRow->setContentsMargins(0, 0, 0, 0);
+    selectedDeviceRow->addWidget(new QLabel(tr("当前设备："), m_selectedDeviceConfigGroup));
+    m_selectedDeviceSerialValue = new QLabel(tr("未选择设备"), m_selectedDeviceConfigGroup);
+    m_selectedDeviceSerialValue->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    selectedDeviceRow->addWidget(m_selectedDeviceSerialValue, 1);
+    groupLayout->addLayout(selectedDeviceRow);
+
+    auto deviceCenterCropRow = new QHBoxLayout();
+    deviceCenterCropRow->setContentsMargins(0, 0, 0, 0);
+    m_deviceCenterCropCheck = new QCheckBox(tr("center crop"), m_selectedDeviceConfigGroup);
+    deviceCenterCropRow->addWidget(m_deviceCenterCropCheck);
+    deviceCenterCropRow->addStretch(1);
+
+    auto deviceCenterCropLabel = new QLabel(tr("crop size:"), m_selectedDeviceConfigGroup);
+    deviceCenterCropRow->addWidget(deviceCenterCropLabel);
+
+    m_deviceCenterCropSizeSpin = new QSpinBox(m_selectedDeviceConfigGroup);
+    m_deviceCenterCropSizeSpin->setRange(2, 4096);
+    m_deviceCenterCropSizeSpin->setSingleStep(2);
+    m_deviceCenterCropSizeSpin->setValue(256);
+    m_deviceCenterCropSizeSpin->setEnabled(false);
+    deviceCenterCropLabel->setBuddy(m_deviceCenterCropSizeSpin);
+    deviceCenterCropRow->addWidget(m_deviceCenterCropSizeSpin);
+    groupLayout->addLayout(deviceCenterCropRow);
+
+    auto deviceMaxFpsRow = new QHBoxLayout();
+    deviceMaxFpsRow->setContentsMargins(0, 0, 0, 0);
+    auto deviceMaxFpsLabel = new QLabel(tr("最大帧率："), m_selectedDeviceConfigGroup);
+    deviceMaxFpsRow->addWidget(deviceMaxFpsLabel);
+
+    m_deviceMaxFpsSpin = new QSpinBox(m_selectedDeviceConfigGroup);
+    m_deviceMaxFpsSpin->setRange(0, 240);
+    m_deviceMaxFpsSpin->setToolTip(tr("0 = 不限制，重启服务后生效"));
+    deviceMaxFpsLabel->setBuddy(m_deviceMaxFpsSpin);
+    deviceMaxFpsRow->addWidget(m_deviceMaxFpsSpin);
+    deviceMaxFpsRow->addStretch(1);
+
+    m_deviceMaxFpsOverrideCheck = new QCheckBox(tr("启用独有配置"), m_selectedDeviceConfigGroup);
+    deviceMaxFpsRow->addWidget(m_deviceMaxFpsOverrideCheck);
+    groupLayout->addLayout(deviceMaxFpsRow);
+
+    m_mouseConfigToggleBtn = new QToolButton(m_selectedDeviceConfigGroup);
+    m_mouseConfigToggleBtn->setText(tr("鼠标显示设置"));
+    m_mouseConfigToggleBtn->setCheckable(true);
+    m_mouseConfigToggleBtn->setChecked(false);
+    m_mouseConfigToggleBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    m_mouseConfigToggleBtn->setArrowType(Qt::RightArrow);
+    connect(m_mouseConfigToggleBtn, &QToolButton::toggled, this, &Dialog::setMouseConfigExpanded);
+    groupLayout->addWidget(m_mouseConfigToggleBtn);
+
+    m_mouseConfigContent = new QWidget(m_selectedDeviceConfigGroup);
+    auto mouseLayout = new QFormLayout(m_mouseConfigContent);
+    mouseLayout->setContentsMargins(18, 0, 0, 0);
+    mouseLayout->setSpacing(4);
+
+    const QString remoteCursorToolTip = tr("控制手机画面里的远端黑色鼠标光标是否渲染；关闭后会按现有隐藏逻辑清掉。");
+    const QString cursorSizeToolTip = tr("远端光标大小，范围 8~128。");
+    const QString normalMouseCompatToolTip = tr("非相对视角下的普通鼠标兼容总开关；关闭时下面几项兼容参数不生效。");
+    const QString touchPriorityToolTip = tr("让普通点击和滑动触控优先于远端黑光标刷新。");
+    const QString cursorThrottleToolTip = tr("启用普通模式远端黑光标限频与点击静默；关闭后恢复更即时的光标发送。");
+    const QString flushIntervalToolTip = tr("黑光标刷新间隔，范围 16~100 ms；越大越稳，但越不跟手。");
+    const QString clickSuppressionToolTip = tr("点击前后黑光标静默时间，范围 0~300 ms；越大越优先保证点击。");
+    const QString tapMinHoldToolTip = tr("普通左键轻点最小按压时长，范围 0~40 ms；0 表示关闭，越大越稳但点击感更慢。");
+
+    m_renderRemoteCursorCheck = new QCheckBox(m_mouseConfigContent);
+    addLabeledMouseConfigRow(mouseLayout, tr("Render Remote Cursor"), remoteCursorToolTip, m_renderRemoteCursorCheck);
+
+    m_cursorSizeSpin = new QSpinBox(m_mouseConfigContent);
+    m_cursorSizeSpin->setRange(8, 128);
+    addLabeledMouseConfigRow(mouseLayout, tr("Cursor Size Px"), cursorSizeToolTip, m_cursorSizeSpin);
+
+    m_normalMouseCompatEnabledCheck = new QCheckBox(m_mouseConfigContent);
+    addLabeledMouseConfigRow(mouseLayout, tr("Normal Mouse Compat"), normalMouseCompatToolTip, m_normalMouseCompatEnabledCheck);
+
+    m_normalMouseTouchPriorityEnabledCheck = new QCheckBox(m_mouseConfigContent);
+    addLabeledMouseConfigRow(mouseLayout, tr("Touch Priority"), touchPriorityToolTip, m_normalMouseTouchPriorityEnabledCheck);
+
+    m_normalMouseCursorThrottleEnabledCheck = new QCheckBox(m_mouseConfigContent);
+    addLabeledMouseConfigRow(mouseLayout, tr("Cursor Throttle"), cursorThrottleToolTip, m_normalMouseCursorThrottleEnabledCheck);
+
+    m_normalMouseCursorFlushIntervalSpin = new QSpinBox(m_mouseConfigContent);
+    m_normalMouseCursorFlushIntervalSpin->setRange(16, 100);
+    m_normalMouseCursorFlushIntervalSpin->setSuffix(tr(" ms"));
+    addLabeledMouseConfigRow(mouseLayout, tr("Cursor Flush Interval"), flushIntervalToolTip, m_normalMouseCursorFlushIntervalSpin);
+
+    m_normalMouseCursorClickSuppressionSpin = new QSpinBox(m_mouseConfigContent);
+    m_normalMouseCursorClickSuppressionSpin->setRange(0, 300);
+    m_normalMouseCursorClickSuppressionSpin->setSuffix(tr(" ms"));
+    addLabeledMouseConfigRow(mouseLayout, tr("Click Suppression"), clickSuppressionToolTip, m_normalMouseCursorClickSuppressionSpin);
+
+    m_normalMouseTapMinHoldSpin = new QSpinBox(m_mouseConfigContent);
+    m_normalMouseTapMinHoldSpin->setRange(0, 40);
+    m_normalMouseTapMinHoldSpin->setSuffix(tr(" ms"));
+    addLabeledMouseConfigRow(mouseLayout, tr("Tap Min Hold"), tapMinHoldToolTip, m_normalMouseTapMinHoldSpin);
+
+    groupLayout->addWidget(m_mouseConfigContent);
+    setMouseConfigExpanded(false);
+
+    connect(m_renderRemoteCursorCheck, &QCheckBox::toggled, this, &Dialog::onSelectedDeviceMouseConfigEdited);
+    connect(m_normalMouseCompatEnabledCheck, &QCheckBox::toggled, this, &Dialog::onSelectedDeviceMouseConfigEdited);
+    connect(m_normalMouseTouchPriorityEnabledCheck, &QCheckBox::toggled, this, &Dialog::onSelectedDeviceMouseConfigEdited);
+    connect(m_normalMouseCursorThrottleEnabledCheck, &QCheckBox::toggled, this, &Dialog::onSelectedDeviceMouseConfigEdited);
+    connect(m_cursorSizeSpin, static_cast<void (QSpinBox::*)(int)>(&QSpinBox::valueChanged),
+            this, &Dialog::onSelectedDeviceMouseConfigEdited);
+    connect(m_normalMouseCursorFlushIntervalSpin, static_cast<void (QSpinBox::*)(int)>(&QSpinBox::valueChanged),
+            this, &Dialog::onSelectedDeviceMouseConfigEdited);
+    connect(m_normalMouseCursorClickSuppressionSpin, static_cast<void (QSpinBox::*)(int)>(&QSpinBox::valueChanged),
+            this, &Dialog::onSelectedDeviceMouseConfigEdited);
+    connect(m_normalMouseTapMinHoldSpin, static_cast<void (QSpinBox::*)(int)>(&QSpinBox::valueChanged),
+            this, &Dialog::onSelectedDeviceMouseConfigEdited);
+    connect(m_deviceMaxFpsSpin, static_cast<void (QSpinBox::*)(int)>(&QSpinBox::valueChanged),
+            this, &Dialog::onSelectedDeviceMaxFpsConfigEdited);
+    connect(m_deviceMaxFpsOverrideCheck, &QCheckBox::toggled,
+            this, &Dialog::onSelectedDeviceMaxFpsConfigEdited);
+    connect(m_deviceCenterCropCheck, &QCheckBox::toggled,
+            this, &Dialog::onSelectedDeviceCenterCropConfigEdited);
+    connect(m_deviceCenterCropSizeSpin, static_cast<void (QSpinBox::*)(int)>(&QSpinBox::valueChanged),
+            this, &Dialog::onSelectedDeviceCenterCropConfigEdited);
+
+    rightLayout->insertWidget(1, m_selectedDeviceConfigGroup);
+}
+
+QString Dialog::currentSelectedSerial() const
+{
+    if (!ui || !ui->serialBox) {
+        return QString();
+    }
+    return ui->serialBox->currentText().trimmed();
+}
+
+ThemeMode Dialog::currentThemeModeSelection() const
+{
+    if (!m_themeModeBox) {
+        return ThemeMode::System;
+    }
+
+    const QVariant value = m_themeModeBox->currentData();
+    if (!value.isValid()) {
+        return ThemeMode::System;
+    }
+
+    return static_cast<ThemeMode>(value.toInt());
+}
+
+QString Dialog::formatSelectedDeviceDisplayName(const QString &serial) const
+{
+    const QString trimmedSerial = serial.trimmed();
+    if (trimmedSerial.isEmpty()) {
+        return tr("未选择设备");
+    }
+
+    const QString nickName = Config::getInstance().getNickName(trimmedSerial).trimmed();
+    if (nickName.isEmpty() || nickName == QLatin1String("Phone")) {
+        return trimmedSerial;
+    }
+
+    return QStringLiteral("%1 - %2").arg(nickName, trimmedSerial);
+}
+
+void Dialog::setMouseConfigExpanded(bool expanded)
+{
+    if (!m_mouseConfigToggleBtn || !m_mouseConfigContent) {
+        return;
+    }
+
+    m_mouseConfigToggleBtn->setArrowType(expanded ? Qt::DownArrow : Qt::RightArrow);
+    m_mouseConfigContent->setVisible(expanded);
+}
+
+void Dialog::updateSelectedDeviceConfigControlState()
+{
+    if (!m_selectedDeviceConfigGroup) {
+        return;
+    }
+
+    const bool hasSerial = !currentSelectedSerial().isEmpty();
+    const bool centerCropEnabled = hasSerial
+        && m_deviceCenterCropCheck
+        && m_deviceCenterCropCheck->isChecked();
+    const bool deviceMaxFpsOverrideEnabled = hasSerial
+        && m_deviceMaxFpsOverrideCheck
+        && m_deviceMaxFpsOverrideCheck->isChecked();
+    const bool compatEnabled = hasSerial
+        && m_normalMouseCompatEnabledCheck
+        && m_normalMouseCompatEnabledCheck->isChecked();
+
+    m_selectedDeviceConfigGroup->setEnabled(hasSerial);
+    if (m_deviceCenterCropCheck) {
+        m_deviceCenterCropCheck->setEnabled(hasSerial);
+    }
+    if (m_deviceCenterCropSizeSpin) {
+        m_deviceCenterCropSizeSpin->setEnabled(centerCropEnabled);
+    }
+    if (m_deviceMaxFpsOverrideCheck) {
+        m_deviceMaxFpsOverrideCheck->setEnabled(hasSerial);
+    }
+    if (m_deviceMaxFpsSpin) {
+        m_deviceMaxFpsSpin->setEnabled(deviceMaxFpsOverrideEnabled);
+    }
+    if (m_renderRemoteCursorCheck) {
+        m_renderRemoteCursorCheck->setEnabled(hasSerial);
+    }
+    if (m_cursorSizeSpin) {
+        m_cursorSizeSpin->setEnabled(hasSerial);
+    }
+    if (m_normalMouseCompatEnabledCheck) {
+        m_normalMouseCompatEnabledCheck->setEnabled(hasSerial);
+    }
+    if (m_normalMouseTouchPriorityEnabledCheck) {
+        m_normalMouseTouchPriorityEnabledCheck->setEnabled(compatEnabled);
+    }
+    if (m_normalMouseCursorThrottleEnabledCheck) {
+        m_normalMouseCursorThrottleEnabledCheck->setEnabled(compatEnabled);
+    }
+    if (m_normalMouseCursorFlushIntervalSpin) {
+        m_normalMouseCursorFlushIntervalSpin->setEnabled(compatEnabled);
+    }
+    if (m_normalMouseCursorClickSuppressionSpin) {
+        m_normalMouseCursorClickSuppressionSpin->setEnabled(compatEnabled);
+    }
+    if (m_normalMouseTapMinHoldSpin) {
+        m_normalMouseTapMinHoldSpin->setEnabled(compatEnabled);
+    }
+}
+
+void Dialog::updateSelectedDeviceConfigUi(const QString &serial)
+{
+    if (!m_selectedDeviceConfigGroup) {
+        return;
+    }
+
+    const QString trimmedSerial = serial.trimmed();
+    m_updatingSelectedDeviceConfigUi = true;
+
+    if (m_selectedDeviceSerialValue) {
+        m_selectedDeviceSerialValue->setText(formatSelectedDeviceDisplayName(trimmedSerial));
+    }
+
+    const bool centerCropEnabled = Config::getInstance().isDeviceCenterCropEnabled(trimmedSerial);
+    const int centerCropSize = centerCropEnabled
+        ? Config::getInstance().getDeviceCenterCropSize(trimmedSerial)
+        : 256;
+    const bool hasMaxFpsOverride = Config::getInstance().hasDeviceMaxFpsOverride(trimmedSerial);
+    const int fallbackMaxFps = ui->maxFpsSpin ? ui->maxFpsSpin->value() : Config::getInstance().getGlobalMaxFps();
+    const int deviceMaxFps = hasMaxFpsOverride
+        ? Config::getInstance().getDeviceMaxFpsOverride(trimmedSerial)
+        : fallbackMaxFps;
+    DeviceMouseConfig config = Config::getInstance().getDeviceMouseConfig(trimmedSerial);
+
+    const QSignalBlocker centerCropCheckBlocker(m_deviceCenterCropCheck);
+    const QSignalBlocker centerCropSizeBlocker(m_deviceCenterCropSizeSpin);
+    const QSignalBlocker deviceMaxFpsBlocker(m_deviceMaxFpsSpin);
+    const QSignalBlocker deviceMaxFpsOverrideBlocker(m_deviceMaxFpsOverrideCheck);
+    const QSignalBlocker remoteCursorBlocker(m_renderRemoteCursorCheck);
+    const QSignalBlocker cursorSizeBlocker(m_cursorSizeSpin);
+    const QSignalBlocker compatBlocker(m_normalMouseCompatEnabledCheck);
+    const QSignalBlocker touchPriorityBlocker(m_normalMouseTouchPriorityEnabledCheck);
+    const QSignalBlocker throttleBlocker(m_normalMouseCursorThrottleEnabledCheck);
+    const QSignalBlocker flushBlocker(m_normalMouseCursorFlushIntervalSpin);
+    const QSignalBlocker suppressionBlocker(m_normalMouseCursorClickSuppressionSpin);
+    const QSignalBlocker tapHoldBlocker(m_normalMouseTapMinHoldSpin);
+
+    if (m_deviceCenterCropCheck) {
+        m_deviceCenterCropCheck->setChecked(centerCropEnabled);
+    }
+    if (m_deviceCenterCropSizeSpin) {
+        m_deviceCenterCropSizeSpin->setValue(centerCropSize);
+    }
+    if (m_deviceMaxFpsOverrideCheck) {
+        m_deviceMaxFpsOverrideCheck->setChecked(hasMaxFpsOverride);
+    }
+    if (m_deviceMaxFpsSpin) {
+        m_deviceMaxFpsSpin->setValue(deviceMaxFps);
+    }
+    if (m_renderRemoteCursorCheck) {
+        m_renderRemoteCursorCheck->setChecked(config.remoteCursorEnabled);
+    }
+    if (m_cursorSizeSpin) {
+        m_cursorSizeSpin->setValue(config.cursorSizePx);
+    }
+    if (m_normalMouseCompatEnabledCheck) {
+        m_normalMouseCompatEnabledCheck->setChecked(config.normalMouseCompatEnabled);
+    }
+    if (m_normalMouseTouchPriorityEnabledCheck) {
+        m_normalMouseTouchPriorityEnabledCheck->setChecked(config.normalMouseTouchPriorityEnabled);
+    }
+    if (m_normalMouseCursorThrottleEnabledCheck) {
+        m_normalMouseCursorThrottleEnabledCheck->setChecked(config.normalMouseCursorThrottleEnabled);
+    }
+    if (m_normalMouseCursorFlushIntervalSpin) {
+        m_normalMouseCursorFlushIntervalSpin->setValue(config.normalMouseCursorFlushIntervalMs);
+    }
+    if (m_normalMouseCursorClickSuppressionSpin) {
+        m_normalMouseCursorClickSuppressionSpin->setValue(config.normalMouseCursorClickSuppressionMs);
+    }
+    if (m_normalMouseTapMinHoldSpin) {
+        m_normalMouseTapMinHoldSpin->setValue(config.normalMouseTapMinHoldMs);
+    }
+
+    updateSelectedDeviceConfigControlState();
+    m_updatingSelectedDeviceConfigUi = false;
+}
+
+void Dialog::saveSelectedDeviceMouseConfig()
+{
+    if (m_updatingSelectedDeviceConfigUi) {
+        return;
+    }
+
+    const QString serial = currentSelectedSerial();
+    if (serial.isEmpty()) {
+        updateSelectedDeviceConfigControlState();
+        return;
+    }
+
+    DeviceMouseConfig config;
+    config.remoteCursorEnabled = m_renderRemoteCursorCheck && m_renderRemoteCursorCheck->isChecked();
+    config.cursorSizePx = m_cursorSizeSpin ? m_cursorSizeSpin->value() : 24;
+    config.normalMouseCompatEnabled = m_normalMouseCompatEnabledCheck && m_normalMouseCompatEnabledCheck->isChecked();
+    config.normalMouseTouchPriorityEnabled = m_normalMouseTouchPriorityEnabledCheck
+        && m_normalMouseTouchPriorityEnabledCheck->isChecked();
+    config.normalMouseCursorThrottleEnabled = m_normalMouseCursorThrottleEnabledCheck
+        && m_normalMouseCursorThrottleEnabledCheck->isChecked();
+    config.normalMouseCursorFlushIntervalMs = m_normalMouseCursorFlushIntervalSpin
+        ? m_normalMouseCursorFlushIntervalSpin->value() : 33;
+    config.normalMouseCursorClickSuppressionMs = m_normalMouseCursorClickSuppressionSpin
+        ? m_normalMouseCursorClickSuppressionSpin->value() : 120;
+    config.normalMouseTapMinHoldMs = m_normalMouseTapMinHoldSpin
+        ? m_normalMouseTapMinHoldSpin->value() : 16;
+
+    Config::getInstance().setDeviceMouseConfig(serial, config);
+    updateSelectedDeviceConfigControlState();
+}
+
+void Dialog::onSelectedDeviceMouseConfigEdited()
+{
+    saveSelectedDeviceMouseConfig();
+}
+
+void Dialog::saveSelectedDeviceCenterCropConfig()
+{
+    if (m_updatingSelectedDeviceConfigUi) {
+        return;
+    }
+
+    const QString serial = currentSelectedSerial();
+    if (serial.isEmpty()) {
+        updateSelectedDeviceConfigControlState();
+        return;
+    }
+
+    const bool enabled = m_deviceCenterCropCheck && m_deviceCenterCropCheck->isChecked();
+    if (enabled) {
+        const int cropSize = m_deviceCenterCropSizeSpin ? m_deviceCenterCropSizeSpin->value() : 256;
+        Config::getInstance().setDeviceCenterCropSize(serial, cropSize);
+    } else {
+        Config::getInstance().clearDeviceCenterCropSize(serial);
+        if (m_deviceCenterCropSizeSpin) {
+            const QSignalBlocker blocker(m_deviceCenterCropSizeSpin);
+            m_deviceCenterCropSizeSpin->setValue(256);
+        }
+    }
+
+    updateSelectedDeviceConfigControlState();
+}
+
+void Dialog::onSelectedDeviceCenterCropConfigEdited()
+{
+    saveSelectedDeviceCenterCropConfig();
+}
+
+void Dialog::saveSelectedDeviceMaxFpsConfig()
+{
+    if (m_updatingSelectedDeviceConfigUi) {
+        return;
+    }
+
+    const QString serial = currentSelectedSerial();
+    if (serial.isEmpty()) {
+        updateSelectedDeviceConfigControlState();
+        return;
+    }
+
+    const bool useDeviceOverride = m_deviceMaxFpsOverrideCheck && m_deviceMaxFpsOverrideCheck->isChecked();
+    if (useDeviceOverride) {
+        const int maxFps = m_deviceMaxFpsSpin ? m_deviceMaxFpsSpin->value() : 0;
+        Config::getInstance().setDeviceMaxFpsOverride(serial, maxFps);
+    } else {
+        Config::getInstance().clearDeviceMaxFpsOverride(serial);
+        if (m_deviceMaxFpsSpin && ui->maxFpsSpin) {
+            const QSignalBlocker blocker(m_deviceMaxFpsSpin);
+            m_deviceMaxFpsSpin->setValue(ui->maxFpsSpin->value());
+        }
+    }
+
+    updateSelectedDeviceConfigControlState();
+}
+
+void Dialog::onSelectedDeviceMaxFpsConfigEdited()
+{
+    saveSelectedDeviceMaxFpsConfig();
+}
+
+void Dialog::onGlobalMaxFpsValueChanged(int value)
+{
+    Q_UNUSED(value);
+    if (!m_deviceMaxFpsSpin || !m_deviceMaxFpsOverrideCheck || m_deviceMaxFpsOverrideCheck->isChecked()) {
+        return;
+    }
+
+    const QSignalBlocker blocker(m_deviceMaxFpsSpin);
+    m_deviceMaxFpsSpin->setValue(ui->maxFpsSpin->value());
 }
 
 void Dialog::updateBootConfig(bool toView)
@@ -243,12 +761,18 @@ void Dialog::updateBootConfig(bool toView)
             ui->bitRateBox->setCurrentText("Kbps");
         }
 
+        if (m_themeModeBox) {
+            const QSignalBlocker blocker(m_themeModeBox);
+            const int index = m_themeModeBox->findData(static_cast<int>(config.themeMode));
+            m_themeModeBox->setCurrentIndex(index >= 0 ? index : 0);
+        }
+        ui->maxFpsSpin->setValue(config.maxFps);
         ui->maxSizeBox->setCurrentIndex(config.maxSizeIndex);
         ui->formatBox->setCurrentIndex(config.recordFormatIndex);
         ui->recordPathEdt->setText(config.recordPath);
         ui->lockOrientationBox->setCurrentIndex(config.lockOrientationIndex);
-        ui->centerCropSizeSpin->setValue(config.videoCenterCropSize > 0 ? qBound(2, config.videoCenterCropSize, 4096) : 256);
-        ui->centerCropCheck->setChecked(config.videoCenterCropSize > 0);
+        ui->localTextInputCheck->setChecked(config.localTextInputEnabled);
+        ui->localTextInputShortcutEdit->setKeySequence(QKeySequence::fromString(config.localTextInputShortcut, QKeySequence::PortableText));
         ui->framelessCheck->setChecked(config.framelessWindow);
         ui->recordScreenCheck->setChecked(config.recordScreen);
         ui->notDisplayCheck->setChecked(config.recordBackground);
@@ -260,15 +784,19 @@ void Dialog::updateBootConfig(bool toView)
         ui->useSingleModeCheck->setChecked(config.simpleMode);
         ui->autoUpdatecheckBox->setChecked(config.autoUpdateDevice);
         ui->showToolbar->setChecked(config.showToolbar);
+        applyLocalTextInputConfigToOpenVideoForms();
     } else {
         UserBootConfig config;
 
         config.bitRate = getBitRate();
+        config.themeMode = currentThemeModeSelection();
+        config.maxFps = ui->maxFpsSpin->value();
         config.maxSizeIndex = ui->maxSizeBox->currentIndex();
         config.recordFormatIndex = ui->formatBox->currentIndex();
         config.recordPath = ui->recordPathEdt->text();
         config.lockOrientationIndex = ui->lockOrientationBox->currentIndex();
-        config.videoCenterCropSize = ui->centerCropCheck->isChecked() ? ui->centerCropSizeSpin->value() : 0;
+        config.localTextInputEnabled = ui->localTextInputCheck->isChecked();
+        config.localTextInputShortcut = ui->localTextInputShortcutEdit->keySequence().toString(QKeySequence::PortableText);
         config.recordScreen = ui->recordScreenCheck->isChecked();
         config.recordBackground = ui->notDisplayCheck->isChecked();
         config.reverseConnect = ui->useReverseCheck->isChecked();
@@ -289,6 +817,15 @@ void Dialog::updateBootConfig(bool toView)
 
         Config::getInstance().setUserBootConfig(config);
     }
+}
+
+void Dialog::onThemeModeChanged(int index)
+{
+    Q_UNUSED(index);
+    UserBootConfig config = Config::getInstance().getUserBootConfig();
+    config.themeMode = currentThemeModeSelection();
+    Config::getInstance().setUserBootConfig(config);
+    ThemeManager::getInstance().applyConfiguredTheme();
 }
 
 void Dialog::execAdbCmd()
@@ -320,7 +857,7 @@ QString Dialog::getGameScript(const QString &fileName)
         return "";
     }
 
-    QFile loadFile(getKeyMapPath() + "/" + fileName);
+    QFile loadFile(getGameScriptPath(fileName));
     if (!loadFile.open(QIODevice::ReadOnly)) {
         outLog("open file failed:" + fileName, true);
         return "";
@@ -329,6 +866,14 @@ QString Dialog::getGameScript(const QString &fileName)
     QString ret = loadFile.readAll();
     loadFile.close();
     return ret;
+}
+
+QString Dialog::getGameScriptPath(const QString &fileName) const
+{
+    if (fileName.isEmpty()) {
+        return QString();
+    }
+    return getKeyMapPath() + "/" + fileName;
 }
 
 void Dialog::slotActivated(QSystemTrayIcon::ActivationReason reason)
@@ -378,6 +923,11 @@ void Dialog::on_stopServerBtn_clicked()
     if (qsc::IDeviceManage::getInstance().disconnectDevice(ui->serialBox->currentText().trimmed())) {
         outLog("stop server");
     }
+}
+
+void Dialog::on_restartServerBtn_clicked()
+{
+    onRestartDeviceRequested(currentSelectedSerial());
 }
 
 void Dialog::on_wirelessConnectBtn_clicked()
@@ -514,7 +1064,13 @@ void Dialog::onDeviceConnected(bool success, const QString &serial, const QStrin
     auto videoForm = new VideoForm(ui->framelessCheck->isChecked(), Config::getInstance().getSkin(), ui->showToolbar->isChecked());
     videoForm->setSerial(serial);
     videoForm->setInitialOrientationHint(initialOrientation);
+    videoForm->setLocalTextInputConfig(ui->localTextInputCheck->isChecked(), ui->localTextInputShortcutEdit->keySequence());
     connect(videoForm, &VideoForm::restartServiceRequested, this, &Dialog::onRestartDeviceRequested);
+    connect(videoForm, &QObject::destroyed, this, [this, serial]() {
+        m_videoForms.remove(serial);
+    });
+    m_videoForms.insert(serial, videoForm);
+    updateVideoFormScriptBinding(serial, getGameScriptPath(ui->gameBox->currentText()), ui->gameBox->currentText(), getGameScript(ui->gameBox->currentText()));
 
     qsc::IDeviceManage::getInstance().getDevice(serial)->setUserData(static_cast<void*>(videoForm));
     qsc::IDeviceManage::getInstance().getDevice(serial)->registerDeviceObserver(videoForm);
@@ -585,6 +1141,7 @@ void Dialog::onRestartDeviceRequested(const QString &serial)
 
 void Dialog::onDeviceDisconnected(QString serial)
 {
+    m_videoForms.remove(serial);
     GroupController::instance().removeDevice(serial);
     auto device = qsc::IDeviceManage::getInstance().getDevice(serial);
     if (!device) {
@@ -683,7 +1240,9 @@ void Dialog::on_applyScriptBtn_clicked()
         return;
     }
 
-    device->updateScript(getGameScript(ui->gameBox->currentText()));
+    const QString scriptJson = getGameScript(ui->gameBox->currentText());
+    device->updateScript(scriptJson);
+    updateVideoFormScriptBinding(curSerial, getGameScriptPath(ui->gameBox->currentText()), ui->gameBox->currentText(), scriptJson);
 }
 
 void Dialog::on_recordScreenCheck_clicked(bool checked)
@@ -699,9 +1258,16 @@ void Dialog::on_recordScreenCheck_clicked(bool checked)
     }
 }
 
-void Dialog::on_centerCropCheck_toggled(bool checked)
+void Dialog::on_localTextInputCheck_toggled(bool checked)
 {
-    ui->centerCropSizeSpin->setEnabled(checked);
+    ui->localTextInputShortcutEdit->setEnabled(checked);
+    applyLocalTextInputConfigToOpenVideoForms();
+}
+
+void Dialog::on_localTextInputShortcutEdit_keySequenceChanged(const QKeySequence &keySequence)
+{
+    Q_UNUSED(keySequence);
+    applyLocalTextInputConfigToOpenVideoForms();
 }
 
 void Dialog::on_usbConnectBtn_clicked()
@@ -797,6 +1363,8 @@ void Dialog::on_updateNameBtn_clicked()
             Config::getInstance().setNickName(ui->serialBox->currentText(), ui->userNameEdt->text());
         }
 
+        handleSelectedSerialChanged(currentSelectedSerial());
+
         on_updateDevice_clicked();
 
         qDebug() << "Update OK!";
@@ -816,9 +1384,10 @@ void Dialog::on_useSingleModeCheck_clicked()
     adjustSize();
 }
 
-void Dialog::on_serialBox_currentIndexChanged(const QString &arg1)
+void Dialog::handleSelectedSerialChanged(const QString &serial)
 {
-    ui->userNameEdt->setText(Config::getInstance().getNickName(arg1));
+    ui->userNameEdt->setText(Config::getInstance().getNickName(serial));
+    updateSelectedDeviceConfigUi(serial);
 }
 
 quint32 Dialog::getBitRate()
@@ -831,11 +1400,12 @@ qsc::DeviceParams Dialog::buildDeviceParams(const QString &serial)
 {
     // this is ok that "original" toUshort is 0
     quint16 videoSize = ui->maxSizeBox->currentText().trimmed().toUShort();
+    const QString trimmedSerial = serial.trimmed();
     qsc::DeviceParams params;
-    params.serial = serial.trimmed();
+    params.serial = trimmedSerial;
     params.maxSize = videoSize;
     params.bitRate = getBitRate();
-    params.maxFps = static_cast<quint32>(Config::getInstance().getMaxFps());
+    params.maxFps = static_cast<quint32>(Config::getInstance().getEffectiveMaxFps(trimmedSerial));
     params.closeScreen = ui->closeScreenCheck->isChecked();
     params.useReverse = ui->useReverseCheck->isChecked();
     params.display = !ui->notDisplayCheck->isChecked();
@@ -857,6 +1427,29 @@ qsc::DeviceParams Dialog::buildDeviceParams(const QString &serial)
     params.codecName = Config::getInstance().getCodecName();
     params.scid = QRandomGenerator::global()->bounded(1, 10000) & 0x7FFFFFFF;
     return params;
+}
+
+void Dialog::applyLocalTextInputConfigToOpenVideoForms()
+{
+    const bool enabled = ui->localTextInputCheck->isChecked();
+    const QKeySequence shortcut = ui->localTextInputShortcutEdit->keySequence();
+    for (auto it = m_videoForms.begin(); it != m_videoForms.end();) {
+        if (it.value().isNull()) {
+            it = m_videoForms.erase(it);
+            continue;
+        }
+        it.value()->setLocalTextInputConfig(enabled, shortcut);
+        ++it;
+    }
+}
+
+void Dialog::updateVideoFormScriptBinding(const QString &serial, const QString &scriptFilePath, const QString &scriptDisplayName, const QString &scriptJson)
+{
+    auto it = m_videoForms.find(serial);
+    if (it == m_videoForms.end() || it.value().isNull()) {
+        return;
+    }
+    it.value()->setScriptBinding(scriptFilePath, scriptDisplayName, scriptJson);
 }
 
 const QString &Dialog::getServerPath()

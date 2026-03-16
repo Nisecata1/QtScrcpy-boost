@@ -184,6 +184,18 @@ set(QC_UI_SOURCES
 )
 source_group(ui FILES ${QC_UI_SOURCES})
 
+set(QC_KEYMAP_EDITOR_SOURCES
+    ui/keymapeditor/keymapkeycodec.h
+    ui/keymapeditor/keymapkeycodec.cpp
+    ui/keymapeditor/keymapeditordocument.h
+    ui/keymapeditor/keymapeditordocument.cpp
+    ui/keymapeditor/keymapeditoroverlay.h
+    ui/keymapeditor/keymapeditoroverlay.cpp
+    ui/keymapeditor/keymapeditorpanel.h
+    ui/keymapeditor/keymapeditorpanel.cpp
+)
+source_group(ui\\keymapeditor FILES ${QC_KEYMAP_EDITOR_SOURCES})
+
 # group controller
 set(QC_GROUP_CONTROLLER
     groupcontroller/groupcontroller.h
@@ -195,6 +207,8 @@ source_group(groupcontroller FILES ${QC_GROUP_CONTROLLER})
 set(QC_UTIL_SOURCES
     util/config.h
     util/config.cpp
+    util/thememanager.h
+    util/thememanager.cpp
     util/mousetap/mousetap.h
     util/mousetap/mousetap.cpp
 )
@@ -259,6 +273,7 @@ set(QC_PROJECT_SOURCES
     ${QC_FONTAWESOME_SOURCES}
     ${QC_UIBASE_SOURCES}
     ${QC_UI_SOURCES}
+    ${QC_KEYMAP_EDITOR_SOURCES}
     ${QC_UTIL_SOURCES}
     ${QC_MAIN_SOURCES}
     ${QC_GROUP_CONTROLLER}
@@ -289,7 +304,9 @@ target_include_directories(${PROJECT_NAME} PRIVATE fontawesome)
 target_include_directories(${PROJECT_NAME} PRIVATE util)
 target_include_directories(${PROJECT_NAME} PRIVATE uibase)
 target_include_directories(${PROJECT_NAME} PRIVATE ui)
+target_include_directories(${PROJECT_NAME} PRIVATE ui/keymapeditor)
 target_include_directories(${PROJECT_NAME} PRIVATE render)
+target_include_directories(${PROJECT_NAME} PRIVATE QtScrcpyCore/src/device/android)
 
 # output dir
 # https://cmake.org/cmake/help/latest/prop_gbl/GENERATOR_IS_MULTI_CONFIG.html
