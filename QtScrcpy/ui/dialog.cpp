@@ -65,17 +65,13 @@ Dialog::Dialog(QWidget *parent) : QWidget(parent), ui(new Ui::Widget)
 {
     ui->setupUi(this);
     initUI();
+    connect(&m_autoUpdatetimer, &QTimer::timeout, this, &Dialog::on_updateDevice_clicked);
 
     updateBootConfig(true);
     refreshControlToolTips();
 
     on_useSingleModeCheck_clicked();
     on_updateDevice_clicked();
-
-    connect(&m_autoUpdatetimer, &QTimer::timeout, this, &Dialog::on_updateDevice_clicked);
-    if (ui->autoUpdatecheckBox->isChecked()) {
-        m_autoUpdatetimer.start(5000);
-    }
 
     connect(&m_adb, &qsc::AdbProcess::adbProcessResult, this, [this](qsc::AdbProcess::ADB_EXEC_RESULT processResult) {
         QString log = "";
@@ -491,7 +487,6 @@ void Dialog::initControlToolTips()
     ui->useSingleModeCheck->setToolTip(tr("切换为快捷连接模式。开启后会隐藏右侧高级配置，只保留左侧快速连接入口。"));
     ui->wifiConnectBtn->setToolTip(tr("按预设流程尝试无线连接：刷新设备、读取 IP、切换 adbd 到 tcpip、执行 adb connect，然后启动投屏。设备需要先通过 USB 被 adb 识别。"));
     ui->usbConnectBtn->setToolTip(tr("按预设流程尝试 USB 直连：停止现有会话、刷新设备列表，并连接第一个 USB 设备。"));
-    ui->autoUpdatecheckBox->setToolTip(tr("每 5 秒自动执行一次 adb devices 刷新设备列表。开启后会持续占用一轮 adb 轮询。"));
     ui->connectedPhoneList->setToolTip(tr("显示当前 adb 识别到的设备。双击某一项会选中该设备并直接启动投屏服务。"));
     ui->adbCommandEdt->setToolTip(tr("输入要执行的 adb 子命令，不需要包含 adb 本体。执行结果会追加到下方日志。"));
     ui->adbCommandBtn->setToolTip(tr("执行上方 adb 命令。命令运行期间，新的 adb 操作会被阻塞。"));
@@ -553,6 +548,8 @@ void Dialog::initControlToolTips()
     if (m_mouseConfigToggleBtn) {
         m_mouseConfigToggleBtn->setToolTip(buildMouseConfigToggleToolTip());
     }
+
+    refreshAutoUpdateToolTips();
 }
 
 void Dialog::refreshControlToolTips()
@@ -561,10 +558,42 @@ void Dialog::refreshControlToolTips()
     ui->localTextInputShortcutEdit->setToolTip(buildLocalTextInputShortcutToolTip());
     setComboAndLineEditToolTip(ui->deviceIpEdt, buildDeviceIpToolTip());
     setComboAndLineEditToolTip(ui->devicePortEdt, buildDevicePortToolTip());
+    refreshAutoUpdateToolTips();
 
     if (m_mouseConfigToggleBtn) {
         m_mouseConfigToggleBtn->setToolTip(buildMouseConfigToggleToolTip());
     }
+}
+
+int Dialog::currentAutoUpdateIntervalSec() const
+{
+    return qBound(1, ui->autoUpdateIntervalSpin->value(), 3600);
+}
+
+int Dialog::currentAutoUpdateIntervalMs() const
+{
+    return currentAutoUpdateIntervalSec() * 1000;
+}
+
+void Dialog::applyAutoUpdateTimerState()
+{
+    const bool enabled = ui->autoUpdatecheckBox->isChecked();
+    ui->autoUpdateIntervalSpin->setEnabled(enabled);
+
+    if (enabled) {
+        m_autoUpdatetimer.start(currentAutoUpdateIntervalMs());
+    } else {
+        m_autoUpdatetimer.stop();
+    }
+}
+
+void Dialog::refreshAutoUpdateToolTips()
+{
+    const int intervalSec = currentAutoUpdateIntervalSec();
+    ui->autoUpdatecheckBox->setToolTip(
+        tr("每 %1 秒自动执行一次 adb devices 刷新设备列表。开启后会持续占用一轮 adb 轮询。").arg(intervalSec));
+    ui->autoUpdateIntervalSpin->setToolTip(
+        tr("控制左侧设备列表自动刷新的时间间隔，单位为秒。当前值：%1 秒；值越小轮询越频繁。").arg(intervalSec));
 }
 
 QString Dialog::buildRecordPathToolTip() const
@@ -921,6 +950,8 @@ void Dialog::updateBootConfig(bool toView)
             const int index = m_themeModeBox->findData(static_cast<int>(config.themeMode));
             m_themeModeBox->setCurrentIndex(index >= 0 ? index : 0);
         }
+        const QSignalBlocker autoUpdateBlocker(ui->autoUpdatecheckBox);
+        const QSignalBlocker autoUpdateIntervalBlocker(ui->autoUpdateIntervalSpin);
         ui->maxFpsSpin->setValue(config.maxFps);
         ui->maxSizeBox->setCurrentIndex(config.maxSizeIndex);
         ui->formatBox->setCurrentIndex(config.recordFormatIndex);
@@ -938,7 +969,10 @@ void Dialog::updateBootConfig(bool toView)
         ui->stayAwakeCheck->setChecked(config.keepAlive);
         ui->useSingleModeCheck->setChecked(config.simpleMode);
         ui->autoUpdatecheckBox->setChecked(config.autoUpdateDevice);
+        ui->autoUpdateIntervalSpin->setValue(config.autoUpdateIntervalSec);
         ui->showToolbar->setChecked(config.showToolbar);
+        applyAutoUpdateTimerState();
+        refreshControlToolTips();
         applyLocalTextInputConfigToOpenVideoForms();
     } else {
         UserBootConfig config;
@@ -962,6 +996,7 @@ void Dialog::updateBootConfig(bool toView)
         config.keepAlive = ui->stayAwakeCheck->isChecked();
         config.simpleMode = ui->useSingleModeCheck->isChecked();
         config.autoUpdateDevice = ui->autoUpdatecheckBox->isChecked();
+        config.autoUpdateIntervalSec = currentAutoUpdateIntervalSec();
         config.showToolbar = ui->showToolbar->isChecked();
 
         // 保存当前IP到历史记录
@@ -1673,11 +1708,16 @@ void Dialog::on_installSndcpyBtn_clicked()
 
 void Dialog::on_autoUpdatecheckBox_toggled(bool checked)
 {
-    if (checked) {
-        m_autoUpdatetimer.start(5000);
-    } else {
-        m_autoUpdatetimer.stop();
-    }
+    Q_UNUSED(checked);
+    applyAutoUpdateTimerState();
+    refreshControlToolTips();
+}
+
+void Dialog::on_autoUpdateIntervalSpin_valueChanged(int value)
+{
+    Q_UNUSED(value);
+    applyAutoUpdateTimerState();
+    refreshControlToolTips();
 }
 
 void Dialog::loadIpHistory()

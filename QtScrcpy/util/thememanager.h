@@ -2,6 +2,7 @@
 #define THEMEMANAGER_H
 
 #include <QObject>
+#include <QString>
 
 #include "config.h"
 
@@ -18,6 +19,9 @@ public:
     void applyConfiguredTheme();
     ThemeMode configuredMode() const;
     bool isDarkTheme() const;
+    QString noVideoOverlayStyleSheet() const;
+    QString localTextInputOverlayStyleSheet() const;
+    QString keymapEditorPanelStyleSheet() const;
 
 signals:
     void themeChanged();

@@ -333,7 +333,7 @@ void VideoForm::initUI()
     m_noVideoLabel = new QLabel(ui->keepRatioWidget);
     m_noVideoLabel->setAlignment(Qt::AlignCenter);
     m_noVideoLabel->setText(tr("Pure Control Mode (Video Disabled)\nControl channel is active."));
-    m_noVideoLabel->setStyleSheet("QLabel { color: #D0D0D0; background: #111111; font-size: 16px; }");
+    m_noVideoLabel->setStyleSheet(ThemeManager::getInstance().noVideoOverlayStyleSheet());
     m_noVideoLabel->setAttribute(Qt::WA_TransparentForMouseEvents, true);
     m_noVideoLabel->setFocusPolicy(Qt::NoFocus);
     m_noVideoLabel->hide();
@@ -343,16 +343,7 @@ void VideoForm::initUI()
     localTextInput->setClearButtonEnabled(true);
     localTextInput->setFocusPolicy(Qt::StrongFocus);
     localTextInput->setAttribute(Qt::WA_InputMethodEnabled, true);
-    localTextInput->setStyleSheet(
-        "QLineEdit {"
-        " background: rgba(18, 18, 18, 210);"
-        " color: #F2F2F2;"
-        " border: 1px solid rgba(255, 255, 255, 90);"
-        " border-radius: 8px;"
-        " padding: 6px 10px;"
-        " selection-background-color: rgba(64, 128, 255, 180);"
-        "}"
-    );
+    localTextInput->setStyleSheet(ThemeManager::getInstance().localTextInputOverlayStyleSheet());
     localTextInput->hide();
     localTextInput->onEscapePressed = [this]() {
         hideLocalTextInputOverlay(true);
@@ -397,33 +388,14 @@ void VideoForm::initUI()
 
 void VideoForm::applyTheme()
 {
-    const bool darkTheme = ThemeManager::getInstance().isDarkTheme();
+    ThemeManager &themeManager = ThemeManager::getInstance();
+    const bool darkTheme = themeManager.isDarkTheme();
     if (m_noVideoLabel) {
-        m_noVideoLabel->setStyleSheet(darkTheme
-            ? QStringLiteral("QLabel { color: #D0D0D0; background: #111111; font-size: 16px; }")
-            : QStringLiteral("QLabel { color: #1F2328; background: rgba(255,255,255,0.92); font-size: 16px; }"));
+        m_noVideoLabel->setStyleSheet(themeManager.noVideoOverlayStyleSheet());
     }
 
     if (m_localTextInput) {
-        m_localTextInput->setStyleSheet(darkTheme
-            ? QStringLiteral(
-                "QLineEdit {"
-                " background: rgba(18, 18, 18, 210);"
-                " color: #F2F2F2;"
-                " border: 1px solid rgba(255, 255, 255, 90);"
-                " border-radius: 8px;"
-                " padding: 6px 10px;"
-                " selection-background-color: rgba(64, 128, 255, 180);"
-                "}")
-            : QStringLiteral(
-                "QLineEdit {"
-                " background: rgba(255, 255, 255, 236);"
-                " color: #1F2328;"
-                " border: 1px solid rgba(11, 132, 243, 120);"
-                " border-radius: 8px;"
-                " padding: 6px 10px;"
-                " selection-background-color: rgba(11, 132, 243, 70);"
-                "}"));
+        m_localTextInput->setStyleSheet(themeManager.localTextInputOverlayStyleSheet());
     }
 
 #ifdef Q_OS_WIN32

@@ -81,6 +81,7 @@ private slots:
     void on_installSndcpyBtn_clicked();
 
     void on_autoUpdatecheckBox_toggled(bool checked);
+    void on_autoUpdateIntervalSpin_valueChanged(int value);
 
     void showIpEditMenu(const QPoint &pos);
     void onSelectedDeviceMouseConfigEdited();
@@ -120,6 +121,10 @@ private:
     void saveSelectedDeviceMouseConfig();
     void saveSelectedDeviceMaxFpsConfig();
     void saveSelectedDeviceCenterCropConfig();
+    int currentAutoUpdateIntervalSec() const;
+    int currentAutoUpdateIntervalMs() const;
+    void applyAutoUpdateTimerState();
+    void refreshAutoUpdateToolTips();
     QString buildRecordPathToolTip() const;
     QString buildLocalTextInputShortcutToolTip() const;
     QString buildDeviceIpToolTip() const;

@@ -34,6 +34,7 @@ struct UserBootConfig
     bool keepAlive        = false;
     bool simpleMode       = false;
     bool autoUpdateDevice = true;
+    int autoUpdateIntervalSec = 5;
     bool showToolbar      = true;
 };
 

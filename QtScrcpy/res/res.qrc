@@ -4,7 +4,7 @@
         <file>image/videoform/phone-h.png</file>
         <file>image/videoform/phone-v.png</file>
         <file>qss/psblack.css</file>
-        <file>qss/pslight.css</file>
+        <file>qss/themebase.css</file>
         <file>qss/psblack/add_bottom.png</file>
         <file>qss/psblack/add_left.png</file>
         <file>qss/psblack/add_right.png</file>
@@ -23,6 +23,24 @@
         <file>qss/psblack/radiobutton_checked_disable.png</file>
         <file>qss/psblack/radiobutton_unchecked.png</file>
         <file>qss/psblack/radiobutton_unchecked_disable.png</file>
+        <file>qss/pslight/add_bottom.png</file>
+        <file>qss/pslight/add_left.png</file>
+        <file>qss/pslight/add_right.png</file>
+        <file>qss/pslight/add_top.png</file>
+        <file>qss/pslight/branch_close.png</file>
+        <file>qss/pslight/branch_open.png</file>
+        <file>qss/pslight/calendar_nextmonth.png</file>
+        <file>qss/pslight/calendar_prevmonth.png</file>
+        <file>qss/pslight/checkbox_checked.png</file>
+        <file>qss/pslight/checkbox_checked_disable.png</file>
+        <file>qss/pslight/checkbox_parcial.png</file>
+        <file>qss/pslight/checkbox_parcial_disable.png</file>
+        <file>qss/pslight/checkbox_unchecked.png</file>
+        <file>qss/pslight/checkbox_unchecked_disable.png</file>
+        <file>qss/pslight/radiobutton_checked.png</file>
+        <file>qss/pslight/radiobutton_checked_disable.png</file>
+        <file>qss/pslight/radiobutton_unchecked.png</file>
+        <file>qss/pslight/radiobutton_unchecked_disable.png</file>
         <file>i18n/en_US.qm</file>
         <file>i18n/zh_CN.qm</file>
         <file>i18n/ja_JP.qm</file>

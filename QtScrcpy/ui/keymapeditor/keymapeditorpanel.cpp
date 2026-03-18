@@ -393,54 +393,9 @@ void KeymapEditorPanel::closeEvent(QCloseEvent *event)
 
 void KeymapEditorPanel::applyTheme()
 {
-    const bool darkTheme = ThemeManager::getInstance().isDarkTheme();
-    setStyleSheet(darkTheme
-        ? QStringLiteral(
-            "#keymapEditorPanel {"
-            " background: rgba(24, 24, 24, 228);"
-            " border: 1px solid rgba(255, 255, 255, 40);"
-            " border-radius: 10px;"
-            " color: #F2F2F2;"
-            "}"
-            "QLabel, QCheckBox, QPushButton { color: #F2F2F2; }"
-            "QLineEdit, QComboBox, QListWidget, QSpinBox {"
-            " background: rgba(40, 40, 40, 220);"
-            " color: #F2F2F2;"
-            " border: 1px solid rgba(255, 255, 255, 50);"
-            " border-radius: 6px;"
-            " padding: 4px;"
-            "}"
-            "QPushButton {"
-            " background: rgba(70, 70, 70, 220);"
-            " border: 1px solid rgba(255, 255, 255, 60);"
-            " border-radius: 6px;"
-            " padding: 4px 8px;"
-            "}"
-            "QPushButton:disabled { color: rgba(255,255,255,110); }"
-            "QFrame[themeSeparator=\"true\"] { color: rgba(255,255,255,40); }")
-        : QStringLiteral(
-            "#keymapEditorPanel {"
-            " background: rgba(248, 250, 252, 240);"
-            " border: 1px solid rgba(31, 35, 40, 38);"
-            " border-radius: 10px;"
-            " color: #1F2328;"
-            "}"
-            "QLabel, QCheckBox, QPushButton { color: #1F2328; }"
-            "QLineEdit, QComboBox, QListWidget, QSpinBox {"
-            " background: rgba(255, 255, 255, 236);"
-            " color: #1F2328;"
-            " border: 1px solid rgba(31, 35, 40, 46);"
-            " border-radius: 6px;"
-            " padding: 4px;"
-            "}"
-            "QPushButton {"
-            " background: rgba(241, 243, 245, 236);"
-            " border: 1px solid rgba(31, 35, 40, 46);"
-            " border-radius: 6px;"
-            " padding: 4px 8px;"
-            "}"
-            "QPushButton:disabled { color: rgba(31,35,40,110); }"
-            "QFrame[themeSeparator=\"true\"] { color: rgba(31,35,40,48); }"));
+    ThemeManager &themeManager = ThemeManager::getInstance();
+    const bool darkTheme = themeManager.isDarkTheme();
+    setStyleSheet(themeManager.keymapEditorPanelStyleSheet());
 
 #ifdef Q_OS_WIN32
     WinUtils::setDarkBorderToWindow((HWND)winId(), darkTheme);
