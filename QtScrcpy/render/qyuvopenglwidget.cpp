@@ -52,7 +52,7 @@ static const QString s_vertShader = R"(
 )";
 
 // 鐗囨鐫€鑹插櫒
-static QString s_fragShader = R"(
+static const QString s_fragShader = R"(
     varying vec2 textureOut;        // 鐢遍《鐐圭潃鑹插櫒浼犻€掕繃鏉ョ殑绾圭悊鍧愭爣
     uniform sampler2D textureY;     // uniform 绾圭悊鍗曞厓锛屽埄鐢ㄧ汗鐞嗗崟鍏冨彲浠ヤ娇鐢ㄥ涓汗鐞?
     uniform sampler2D textureU;     // sampler2D鏄?D閲囨牱鍣?
@@ -98,6 +98,9 @@ QYUVOpenGLWidget::QYUVOpenGLWidget(QWidget *parent) : QOpenGLWidget(parent)
 
 QYUVOpenGLWidget::~QYUVOpenGLWidget()
 {
+    if (!context()) {
+        return;
+    }
     makeCurrent();
     m_vbo.destroy();
     deInitTextures();
@@ -277,9 +280,15 @@ void QYUVOpenGLWidget::paintGL()
         glActiveTexture(GL_TEXTURE2);
         glBindTexture(GL_TEXTURE_2D, m_texture[2]);
 
+        m_vbo.bind();
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        m_vbo.release();
 
-        glViewport(0, 0, qMax(1, viewW), qMax(1, viewH));
+        if (currentViewport[2] > 0 && currentViewport[3] > 0) {
+            glViewport(currentViewport[0], currentViewport[1], currentViewport[2], currentViewport[3]);
+        } else {
+            glViewport(0, 0, qMax(1, viewW), qMax(1, viewH));
+        }
     }
 
     m_shaderProgram.release();
@@ -291,15 +300,15 @@ void QYUVOpenGLWidget::resizeGL(int width, int height)
 }
 void QYUVOpenGLWidget::initShader()
 {
-    // opengles鐨刦loat銆乮nt绛夎鎵嬪姩鎸囧畾绮惧害
+    QString fragShader = s_fragShader;
     if (QCoreApplication::testAttribute(Qt::AA_UseOpenGLES)) {
-        s_fragShader.prepend(R"(
+        fragShader.prepend(R"(
                              precision mediump int;
                              precision mediump float;
                              )");
     }
     m_shaderProgram.addShaderFromSourceCode(QOpenGLShader::Vertex, s_vertShader);
-    m_shaderProgram.addShaderFromSourceCode(QOpenGLShader::Fragment, s_fragShader);
+    m_shaderProgram.addShaderFromSourceCode(QOpenGLShader::Fragment, fragShader);
     m_shaderProgram.link();
     m_shaderProgram.bind();
 
@@ -327,7 +336,9 @@ void QYUVOpenGLWidget::initTextures()
         return;
     }
 
-    // 鍒涘缓绾圭悊
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+
+    // 创建纹理
     glGenTextures(1, &m_texture[0]);
     glBindTexture(GL_TEXTURE_2D, m_texture[0]);
     // 璁剧疆绾圭悊缂╂斁鏃剁殑绛栫暐
@@ -371,15 +382,18 @@ void QYUVOpenGLWidget::deInitTextures()
 
 void QYUVOpenGLWidget::updateTexture(GLuint texture, quint32 textureType, quint8 *pixels, quint32 stride)
 {
-    if (!pixels)
+    if (!pixels || !context() || !m_streamFrameSize.isValid()) {
         return;
+    }
 
     QSize size = 0 == textureType ? m_streamFrameSize : m_streamFrameSize / 2;
 
     makeCurrent();
     glBindTexture(GL_TEXTURE_2D, texture);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glPixelStorei(GL_UNPACK_ROW_LENGTH, static_cast<GLint>(stride));
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, size.width(), size.height(), GL_LUMINANCE, GL_UNSIGNED_BYTE, pixels);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
     doneCurrent();
 }
 

@@ -23,7 +23,9 @@ set(qsc_required_runtime_files
     "Qt6Multimedia${qt_suffix}.dll"
     "Qt6OpenGL${qt_suffix}.dll"
     "Qt6OpenGLWidgets${qt_suffix}.dll"
+    "Qt6Svg${qt_suffix}.dll"
     "platforms/qwindows${qt_suffix}.dll"
+    "imageformats/qsvg${qt_suffix}.dll"
 )
 
 set(qsc_missing_runtime_files "")
@@ -42,8 +44,13 @@ string(JOIN ", " qsc_missing_runtime_files_text ${qsc_missing_runtime_files})
 message(STATUS "[QtScrcpy] Missing Qt runtime files for ${QSC_DEPLOY_CONFIG}: ${qsc_missing_runtime_files_text}")
 message(STATUS "[QtScrcpy] Running windeployqt for ${QSC_TARGET_FILE}")
 
+set(qsc_windeployqt_mode "--release")
+if(DEFINED QSC_DEPLOY_CONFIG AND QSC_DEPLOY_CONFIG STREQUAL "Debug")
+    set(qsc_windeployqt_mode "--debug")
+endif()
+
 execute_process(
-    COMMAND "${QSC_WINDEPLOYQT_EXECUTABLE}" --no-compiler-runtime "${QSC_TARGET_FILE}"
+    COMMAND "${QSC_WINDEPLOYQT_EXECUTABLE}" ${qsc_windeployqt_mode} --no-compiler-runtime "${QSC_TARGET_FILE}"
     RESULT_VARIABLE qsc_windeployqt_result
 )
 

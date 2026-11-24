@@ -28,6 +28,7 @@ public:
     QString getErrorOut();
 
     static const QString &getAdbPath();
+    static void clearAdbPathCache();
 
 signals:
     void adbProcessImplResult(qsc::AdbProcess::ADB_EXEC_RESULT processResult);

@@ -387,8 +387,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
     endif()
 
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory "${QSC_DEPLOY_PATH}/config"
-        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/../config" "${QSC_DEPLOY_PATH}/config"
+        COMMAND ${CMAKE_COMMAND} -DSRC=${CMAKE_CURRENT_SOURCE_DIR}/../config -DDST=${QSC_DEPLOY_PATH}/config -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/copy_config_if_missing.cmake"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/sndcpy/sndcpy.bat" "${QSC_DEPLOY_PATH}"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/sndcpy/sndcpy.apk" "${QSC_DEPLOY_PATH}"
     )
@@ -414,8 +413,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     set(CMAKE_OSX_DEPLOYMENT_TARGET "10.15")
 
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory "${QSC_DEPLOY_PATH}/config"
-        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/../config" "${QSC_DEPLOY_PATH}/config"
+        COMMAND ${CMAKE_COMMAND} -DSRC=${CMAKE_CURRENT_SOURCE_DIR}/../config -DDST=${QSC_DEPLOY_PATH}/config -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/copy_config_if_missing.cmake"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/sndcpy/sndcpy.sh" "${QSC_DEPLOY_PATH}"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/sndcpy/sndcpy.apk" "${QSC_DEPLOY_PATH}"
     )
@@ -445,8 +443,7 @@ endif()
 # Linux
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory "${QSC_DEPLOY_PATH}/config"
-        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/../config" "${QSC_DEPLOY_PATH}/config"
+        COMMAND ${CMAKE_COMMAND} -DSRC=${CMAKE_CURRENT_SOURCE_DIR}/../config -DDST=${QSC_DEPLOY_PATH}/config -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/copy_config_if_missing.cmake"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/sndcpy/sndcpy.sh" "${QSC_DEPLOY_PATH}"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/sndcpy/sndcpy.apk" "${QSC_DEPLOY_PATH}"
     )

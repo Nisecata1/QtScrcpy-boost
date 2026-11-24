@@ -54,6 +54,7 @@ private:
     void *m_mappingHandle = nullptr;
     unsigned char *m_sharedBase = nullptr;
 #endif
+    bool m_enabled = true;
     bool m_mappingReady = false;
     SwsContext *m_swsContext = nullptr;
     std::vector<unsigned char> m_bgrBuffer;

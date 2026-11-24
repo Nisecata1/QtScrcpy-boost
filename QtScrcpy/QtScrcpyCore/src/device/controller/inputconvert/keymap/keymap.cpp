@@ -14,6 +14,13 @@ KeyMap::~KeyMap() {}
 
 void KeyMap::loadKeyMap(const QString &json)
 {
+    m_keyMapNodes.clear();
+    m_rmapKey.clear();
+    m_rmapMouse.clear();
+    m_idxSteerWheel = -1;
+    m_idxMouseMove = -1;
+    m_switchKey = KeyNode(AT_KEY, Qt::Key_QuoteLeft);
+
     QString errorString;
     QJsonParseError jsonError;
     QJsonDocument jsonDoc;
@@ -49,6 +56,9 @@ void KeyMap::loadKeyMap(const QString &json)
         QJsonObject mouseMoveMap = getItemObject(rootObj, "mouseMoveMap");
         KeyMapNode keyMapNode;
         keyMapNode.type = KMT_MOUSE_MOVE;
+        keyMapNode.data.mouseMove.startPos = QPointF(0.0, 0.0);
+        keyMapNode.data.mouseMove.speedRatio = QPointF(1.0, 1.0);
+        keyMapNode.data.mouseMove.smallEyes = KeyNode();
 
         bool have_speedRatio = false;
 
@@ -78,7 +88,7 @@ void KeyMap::loadKeyMap(const QString &json)
         }
 
         // Sanity check: No ratio must be lower than 0.001
-        if ( ( keyMapNode.data.mouseMove.speedRatio.x() < 0.001f ) || ( keyMapNode.data.mouseMove.speedRatio.x() < 0.001f ) ) {
+        if ( ( keyMapNode.data.mouseMove.speedRatio.x() < 0.001f ) || ( keyMapNode.data.mouseMove.speedRatio.y() < 0.001f ) ) {
             errorString = QString("json error: Minimum speedRatio is 0.001");
             goto parseError;
         }

@@ -57,6 +57,9 @@ constexpr int kRelativeLookConfigDebounceMs = 120;
 constexpr quint32 kAiDeltaMagic = 0x31444941U; // "AID1" little-endian
 constexpr quint16 kAiDeltaVersion = 1;
 constexpr quint16 kAiUdpPort = 12345;
+#if defined(Q_OS_WIN32)
+int s_rawInputActiveCount = 0;
+#endif
 
 class LocalTextInputOverlay final : public QLineEdit
 {
@@ -432,15 +435,26 @@ QRect VideoForm::getGrabCursorRect()
 {
     QRect rc;
 #if defined(Q_OS_WIN32)
-    rc = QRect(ui->keepRatioWidget->mapToGlobal(m_videoWidget->pos()), m_videoWidget->size());
-    // high dpi support
-    rc.setTopLeft(rc.topLeft() * m_videoWidget->devicePixelRatioF());
-    rc.setBottomRight(rc.bottomRight() * m_videoWidget->devicePixelRatioF());
-
-    rc.setX(rc.x() + 10);
-    rc.setY(rc.y() + 10);
-    rc.setWidth(rc.width() - 20);
-    rc.setHeight(rc.height() - 20);
+    if (m_videoWidget && m_videoWidget->width() > 0 && m_videoWidget->height() > 0) {
+        POINT clientOrigin{0, 0};
+        if (ClientToScreen(reinterpret_cast<HWND>(winId()), &clientOrigin)) {
+            const qreal dpr = devicePixelRatioF();
+            const QPoint relTopLeft = m_videoWidget->mapTo(this, QPoint(0, 0));
+            const int left = static_cast<int>(clientOrigin.x) + qRound(relTopLeft.x() * dpr);
+            const int top = static_cast<int>(clientOrigin.y) + qRound(relTopLeft.y() * dpr);
+            const int width = qRound(m_videoWidget->width() * dpr);
+            const int height = qRound(m_videoWidget->height() * dpr);
+            const int inset = (width > 24 && height > 24) ? 10 : 0;
+            rc = QRect(left + inset, top + inset, width - inset * 2, height - inset * 2);
+        }
+    }
+    if (rc.isEmpty() && m_videoWidget) {
+        rc = QRect(ui->keepRatioWidget->mapToGlobal(m_videoWidget->pos()), m_videoWidget->size());
+        rc.setTopLeft(rc.topLeft() * m_videoWidget->devicePixelRatioF());
+        rc.setBottomRight(rc.bottomRight() * m_videoWidget->devicePixelRatioF());
+        const int inset = (rc.width() > 24 && rc.height() > 24) ? 10 : 0;
+        rc.adjust(inset, inset, -inset, -inset);
+    }
 #elif defined(Q_OS_OSX)
     rc = m_videoWidget->geometry();
     rc.setTopLeft(ui->keepRatioWidget->mapToGlobal(rc.topLeft()));
@@ -859,7 +873,9 @@ void VideoForm::showToolForm(bool show)
         refreshToolFormRecordingState();
     }
     m_toolForm->move(pos().x() + geometry().width(), pos().y() + 30);
-    m_toolForm->setVisible(show && !isKeymapEditorActive());
+    const bool shouldShow = show && !isKeymapEditorActive() && !isFullScreen();
+    m_toolForm->setAutoShowWithTarget(shouldShow);
+    m_toolForm->setVisible(shouldShow);
 }
 
 void VideoForm::moveCenter()
@@ -1723,14 +1739,22 @@ bool VideoForm::isCursorConstraintActive() const
 
 void VideoForm::applyCursorConstraintState()
 {
-    const bool active = isCursorConstraintActive();
-    const QRect rc = getGrabCursorRect();
+    const bool active = isCursorConstraintActive() && isVisible() && isActiveWindow();
+    const QRect rc = active ? getGrabCursorRect() : QRect();
     if (active && rc.isValid() && !rc.isEmpty()) {
-        MouseTap::getInstance()->enableMouseEventTap(rc, true);
+        if (!m_cursorClippedBySelf || m_lastCursorClipRect != rc) {
+            MouseTap::getInstance()->enableMouseEventTap(rc, true);
+            m_cursorClippedBySelf = true;
+            m_lastCursorClipRect = rc;
+        }
         return;
     }
 
-    MouseTap::getInstance()->enableMouseEventTap(QRect(), false);
+    if (m_cursorClippedBySelf) {
+        MouseTap::getInstance()->enableMouseEventTap(QRect(), false);
+        m_cursorClippedBySelf = false;
+        m_lastCursorClipRect = QRect();
+    }
 }
 
 void VideoForm::toggleManualCursorLock()
@@ -2156,9 +2180,17 @@ void VideoForm::onAiUdpReadyRead()
     }
 
     while (m_aiUdpSocket->hasPendingDatagrams()) {
+        const qint64 pendingSize = m_aiUdpSocket->pendingDatagramSize();
+        if (pendingSize <= 0) {
+            m_aiUdpSocket->readDatagram(nullptr, 0);
+            continue;
+        }
         QByteArray datagram;
-        datagram.resize(static_cast<int>(m_aiUdpSocket->pendingDatagramSize()));
+        datagram.resize(static_cast<int>(pendingSize));
         if (m_aiUdpSocket->readDatagram(datagram.data(), datagram.size()) <= 0) {
+            continue;
+        }
+        if (!m_rawInputActive || !m_cursorGrabbed) {
             continue;
         }
         if (datagram.size() < static_cast<int>(sizeof(AiDeltaPacketV1))) {
@@ -2330,7 +2362,10 @@ void VideoForm::setRawInputActive(bool active)
             return;
         }
 
-        m_rawInputRegistered = true;
+        if (!m_rawInputRegistered) {
+            m_rawInputRegistered = true;
+            ++s_rawInputActiveCount;
+        }
         m_rawInputActive = true;
         m_leftButtonDown = false;
         m_rawInputAccumDelta = QPointF(0.0, 0.0);
@@ -2346,15 +2381,18 @@ void VideoForm::setRawInputActive(bool active)
         }
 
         if (m_rawInputRegistered) {
-            RAWINPUTDEVICE rawInputDevice;
-            rawInputDevice.usUsagePage = 0x01;
-            rawInputDevice.usUsage = 0x02;
-            rawInputDevice.dwFlags = RIDEV_REMOVE;
-            rawInputDevice.hwndTarget = nullptr;
-            RegisterRawInputDevices(&rawInputDevice, 1, sizeof(rawInputDevice));
+            m_rawInputRegistered = false;
+            s_rawInputActiveCount = qMax(0, s_rawInputActiveCount - 1);
+            if (s_rawInputActiveCount == 0) {
+                RAWINPUTDEVICE rawInputDevice;
+                rawInputDevice.usUsagePage = 0x01;
+                rawInputDevice.usUsage = 0x02;
+                rawInputDevice.dwFlags = RIDEV_REMOVE;
+                rawInputDevice.hwndTarget = nullptr;
+                RegisterRawInputDevices(&rawInputDevice, 1, sizeof(rawInputDevice));
+            }
         }
 
-        m_rawInputRegistered = false;
         m_rawInputActive = false;
         m_leftButtonDown = false;
         m_rawInputAccumDelta = QPointF(0.0, 0.0);
@@ -2488,6 +2526,11 @@ void VideoForm::mouseReleaseEvent(QMouseEvent *event)
     }
 
     auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
+    if ((event->button() == Qt::MiddleButton || event->button() == Qt::RightButton)
+        && device && !device->isCurrentCustomKeymap()) {
+        return;
+    }
+
     if (m_dragPosition.isNull()) {
         if (!device) {
             return;
@@ -2584,8 +2627,10 @@ bool VideoForm::nativeEvent(const QByteArray &eventType, void *message, qintptr 
         if (buttonFlags & RI_MOUSE_LEFT_BUTTON_UP) {
             m_leftButtonDown = false;
         }
-        m_rawInputAccumDelta.rx() += static_cast<qreal>(raw->data.mouse.lLastX);
-        m_rawInputAccumDelta.ry() += static_cast<qreal>(raw->data.mouse.lLastY);
+        if ((raw->data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE) == 0) {
+            m_rawInputAccumDelta.rx() += static_cast<qreal>(raw->data.mouse.lLastX);
+            m_rawInputAccumDelta.ry() += static_cast<qreal>(raw->data.mouse.lLastY);
+        }
     }
 
     return QWidget::nativeEvent(eventType, message, result);
@@ -2701,6 +2746,36 @@ void VideoForm::paintEvent(QPaintEvent *paint)
 #endif
     QPainter p(this);
     style()->drawPrimitive(QStyle::PE_Widget, &opt, &p, this);
+}
+
+void VideoForm::changeEvent(QEvent *event)
+{
+    QWidget::changeEvent(event);
+    if (!event || event->type() != QEvent::ActivationChange) {
+        return;
+    }
+
+    if (!isActiveWindow()) {
+        m_leftButtonDown = false;
+        m_rawInputAccumDelta = QPointF(0.0, 0.0);
+        m_aiRawInputAccumDelta = QPointF(0.0, 0.0);
+        applyCursorConstraintState();
+    } else {
+        applyCursorConstraintState();
+#if defined(Q_OS_WIN32)
+        if (m_rawInputActive && m_cursorGrabbed && m_rawInputEnabled) {
+            RAWINPUTDEVICE rawInputDevice;
+            rawInputDevice.usUsagePage = 0x01;
+            rawInputDevice.usUsage = 0x02;
+            rawInputDevice.dwFlags = 0;
+            rawInputDevice.hwndTarget = reinterpret_cast<HWND>(winId());
+            if (RegisterRawInputDevices(&rawInputDevice, 1, sizeof(rawInputDevice)) && !m_rawInputRegistered) {
+                m_rawInputRegistered = true;
+                ++s_rawInputActiveCount;
+            }
+        }
+#endif
+    }
 }
 
 void VideoForm::showEvent(QShowEvent *event)

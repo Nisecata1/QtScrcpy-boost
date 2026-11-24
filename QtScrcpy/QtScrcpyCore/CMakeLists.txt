@@ -230,14 +230,14 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     # copy bundle file    
     add_custom_command(TARGET ${QSC_PROJECT_NAME} POST_BUILD
         # dylib,scrcpy-server,adb copy to Contents/MacOS
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${FFMPEG_LIB_PATH}/libavcodec.58.dylib" "${QSC_DEPLOY_PATH}/MacOS"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${FFMPEG_LIB_PATH}/libavformat.58.dylib" "${QSC_DEPLOY_PATH}/MacOS"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${FFMPEG_LIB_PATH}/libavutil.56.dylib" "${QSC_DEPLOY_PATH}/MacOS"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${FFMPEG_LIB_PATH}/libswscale.5.dylib" "${QSC_DEPLOY_PATH}/MacOS"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${FFMPEG_LIB_PATH}/libswresample.3.dylib" "${QSC_DEPLOY_PATH}/MacOS"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${FFMPEG_LIB_PATH}/libavcodec.58.dylib" "${QSC_DEPLOY_PATH}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${FFMPEG_LIB_PATH}/libavformat.58.dylib" "${QSC_DEPLOY_PATH}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${FFMPEG_LIB_PATH}/libavutil.56.dylib" "${QSC_DEPLOY_PATH}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${FFMPEG_LIB_PATH}/libswscale.5.dylib" "${QSC_DEPLOY_PATH}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${FFMPEG_LIB_PATH}/libswresample.3.dylib" "${QSC_DEPLOY_PATH}"
 
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/scrcpy-server" "${QSC_DEPLOY_PATH}/MacOS"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/adb/mac/adb" "${QSC_DEPLOY_PATH}/MacOS"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/scrcpy-server" "${QSC_DEPLOY_PATH}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/adb/mac/adb" "${QSC_DEPLOY_PATH}"
     )
 endif()
 

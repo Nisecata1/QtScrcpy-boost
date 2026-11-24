@@ -39,6 +39,9 @@
 #define COMMON_RENDER_EXPIRED_FRAMES_KEY "RenderExpiredFrames"
 #define COMMON_RENDER_EXPIRED_FRAMES_DEF 0
 
+#define COMMON_AI_VISION_SHM_ENABLED_KEY "AIVisionSharedMemoryEnabled"
+#define COMMON_AI_VISION_SHM_ENABLED_DEF true
+
 #define COMMON_ADB_PATH_KEY "AdbPath"
 #define COMMON_ADB_PATH_DEF ""
 
@@ -724,6 +727,14 @@ int Config::getRenderExpiredFrames()
     renderExpiredFrames = m_settings->value(COMMON_RENDER_EXPIRED_FRAMES_KEY, COMMON_RENDER_EXPIRED_FRAMES_DEF).toInt();
     m_settings->endGroup();
     return renderExpiredFrames;
+}
+
+bool Config::getAIVisionSharedMemoryEnabled()
+{
+    m_userData->beginGroup(GROUP_COMMON);
+    const QVariant value = m_userData->value(COMMON_AI_VISION_SHM_ENABLED_KEY);
+    m_userData->endGroup();
+    return value.isValid() ? parseBoolSetting(value, COMMON_AI_VISION_SHM_ENABLED_DEF) : COMMON_AI_VISION_SHM_ENABLED_DEF;
 }
 
 QString Config::getPushFilePath()

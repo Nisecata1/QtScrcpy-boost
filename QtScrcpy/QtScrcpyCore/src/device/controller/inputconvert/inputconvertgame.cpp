@@ -152,7 +152,7 @@ void InputConvertGame::mouseEvent(const QMouseEvent *from, const QSize &frameSiz
     const bool inGameRelativeMode = isRelativeViewMode();
     if (inGameRelativeMode) {
         InputConvertNormal::sendCursorHideEvent();
-    } else if (from->type() == QEvent::MouseMove) {
+    } else if (from->type() == QEvent::MouseMove && from->buttons() == Qt::NoButton) {
         InputConvertNormal::handleConfiguredCursorFeedback(from, frameSize, showSize);
     }
 
@@ -183,9 +183,13 @@ void InputConvertGame::wheelEvent(const QWheelEvent *from, const QSize &frameSiz
 
 void InputConvertGame::keyEvent(const QKeyEvent *from, const QSize &frameSize, const QSize &showSize)
 {
-    // 澶勭悊寮€鍏虫寜閿?
+    if (!from) {
+        return;
+    }
+
+    // 处理开关按键
     if (m_keyMap.isSwitchOnKeyboard() && m_keyMap.getSwitchKey() == from->key()) {
-        if (QEvent::KeyPress != from->type()) {
+        if (QEvent::KeyPress != from->type() || from->isAutoRepeat()) {
             return;
         }
         if (!switchGameMap()) {
@@ -195,8 +199,11 @@ void InputConvertGame::keyEvent(const QKeyEvent *from, const QSize &frameSize, c
     }
 
     const KeyMap::KeyMapNode &node = m_keyMap.getKeyMapNodeKey(from->key());
-    // 澶勭悊鐗规畩鎸夐敭锛氬彲浠ラ噴鏀惧嚭榧犳爣鐨勬寜閿?
+    // 处理特殊按键：可以释放出鼠标的按键
     if (m_needBackMouseMove && KeyMap::KMT_CLICK == node.type && node.data.click.switchMap) {
+        if (from->isAutoRepeat()) {
+            return;
+        }
         updateSize(frameSize, showSize);
         // Qt::Key_Tab Qt::Key_M for PUBG mobile
         processKeyClick(node.data.click.keyNode.pos, false, node.data.click.switchMap, from);
@@ -225,8 +232,10 @@ void InputConvertGame::keyEvent(const QKeyEvent *from, const QSize &frameSize, c
             return;
         }
 
-        // small eyes锛堜笉鍔級
-        if (m_keyMap.isValidMouseMoveMap() && from->key() == m_keyMap.getMouseMoveMap().data.mouseMove.smallEyes.key) {
+        // small eyes（小眼睛视角）
+        if (m_keyMap.isValidMouseMoveMap()
+            && m_keyMap.getMouseMoveMap().data.mouseMove.smallEyes.type != KeyMap::AT_INVALID
+            && from->key() == m_keyMap.getMouseMoveMap().data.mouseMove.smallEyes.key) {
             m_ctrlMouseMove.smallEyes = (QEvent::KeyPress == from->type());
 
             if (QEvent::KeyPress == from->type()) {
@@ -377,7 +386,7 @@ void InputConvertGame::sendTouchEvent(int id, QPointF pos, AndroidMotioneventAct
         static_cast<AndroidMotioneventButtons>(0),
         static_cast<AndroidMotioneventButtons>(0),
         QRect(packetPos, calcTouchPacketSize(useLogicalCoords)),
-        AMOTION_EVENT_ACTION_DOWN == action ? 1.0f : 0.0f);
+        AMOTION_EVENT_ACTION_UP == action ? 0.0f : 1.0f);
     if (relativeLookTouch) {
         sendControlMsgImmediately(controlMsg);
     } else {
@@ -632,6 +641,15 @@ void InputConvertGame::getDelayQueue(const QPointF& start, const QPointF& end,
     double dy=y2-y1;
     double e=(fabs(dx)>fabs(dy))?fabs(dx):fabs(dy);
     e /= distanceStep;
+    if (e < 1.0) {
+        QQueue<QPointF> queue;
+        QQueue<quint32> queue2;
+        queue.enqueue(end);
+        queue2.enqueue(lowestTimer);
+        queuePos = queue;
+        queueTimer = queue2;
+        return;
+    }
     dx/=e;
     dy/=e;
 
@@ -909,7 +927,7 @@ void InputConvertGame::processSteerWheel(const KeyMap::KeyMapNode &node, const Q
 
 void InputConvertGame::processKeyClick(const QPointF &clickPos, bool clickTwice, bool switchMap, const QKeyEvent *from)
 {
-    if (switchMap && QEvent::KeyRelease == from->type()) {
+    if (switchMap && QEvent::KeyRelease == from->type() && !from->isAutoRepeat()) {
         m_needBackMouseMove = !m_needBackMouseMove;
         const bool relativeViewMode = isRelativeViewMode();
         syncRemoteCursorStateForViewMode(relativeViewMode);
@@ -1367,6 +1385,33 @@ bool InputConvertGame::switchGameMap()
     const bool relativeViewMode = isRelativeViewMode();
     syncRemoteCursorStateForViewMode(relativeViewMode);
     resetMouseMoveSession(!relativeViewMode);
+
+    if (!m_gameMap) {
+        for (int i = 0; i < MULTI_TOUCH_MAX_NUM; ++i) {
+            const int boundKey = m_multiTouchID[i];
+            if (boundKey == 0 || boundKey == Qt::ExtraButton24) {
+                continue;
+            }
+            const KeyMap::KeyMapNode &node = m_keyMap.getKeyMapNode(boundKey);
+            if (node.type != KeyMap::KMT_INVALID && node.alwaysActive) {
+                continue;
+            }
+            releaseInjectedTouchSlot(i, false);
+            m_multiTouchID[i] = 0;
+        }
+        if (m_ctrlSteerWheel.touchKey != Qt::Key_unknown) {
+            const KeyMap::KeyMapNode &steerNode = m_keyMap.getKeyMapNodeKey(m_ctrlSteerWheel.touchKey);
+            if (steerNode.type == KeyMap::KMT_INVALID || !steerNode.alwaysActive) {
+                clearSteerWheelState();
+            }
+        }
+        if (m_dragDelayData.pressKey != 0) {
+            const KeyMap::KeyMapNode &dragNode = m_keyMap.getKeyMapNodeKey(m_dragDelayData.pressKey);
+            if (dragNode.type == KeyMap::KMT_INVALID || !dragNode.alwaysActive) {
+                clearDragState();
+            }
+        }
+    }
 
     if (!m_keyMap.isValidMouseMoveMap()) {
         return m_gameMap;

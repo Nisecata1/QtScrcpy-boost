@@ -29,6 +29,7 @@ AdbProcess::~AdbProcess()
 void AdbProcess::setAdbPath(const QString &adbPath)
 {
     g_adbPath = adbPath;
+    AdbProcessImpl::clearAdbPathCache();
 }
 
 QString AdbProcess::getAdbPath()

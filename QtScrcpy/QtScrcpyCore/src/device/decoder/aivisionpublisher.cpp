@@ -3,6 +3,11 @@
 #include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <mutex>
+
+#include <QCoreApplication>
+#include <QFileInfo>
+#include <QSettings>
 
 #if defined(_WIN32)
 #include <Windows.h>
@@ -16,11 +21,54 @@ constexpr int kMaxRoiSize = 256;
 constexpr size_t kMaxPayloadBytes = static_cast<size_t>(kMaxRoiSize) * static_cast<size_t>(kMaxRoiSize) * 3u;
 constexpr const char *kMappingName = "Local\\ScrcpyAIVision";
 constexpr size_t kSharedMemoryBytes = sizeof(ScrcpyAIVisionHeaderV1) + kMaxPayloadBytes;
+
+std::mutex &sharedPublishMutex()
+{
+    static std::mutex s_mutex;
+    return s_mutex;
+}
+
+bool readAIVisionSharedMemoryEnabled()
+{
+    QString iniPath;
+    if (QCoreApplication::instance()) {
+        const QString appPath = QCoreApplication::applicationDirPath() + "/config/userdata.ini";
+        if (QFileInfo::exists(appPath)) {
+            iniPath = appPath;
+        }
+    }
+    if (iniPath.isEmpty()) {
+        const QString envConfig = QString::fromLocal8Bit(qgetenv("QTSCRCPY_CONFIG_PATH"));
+        if (!envConfig.isEmpty()) {
+            const QString candidate = envConfig + "/userdata.ini";
+            if (QFileInfo::exists(candidate)) {
+                iniPath = candidate;
+            }
+        }
+    }
+    if (iniPath.isEmpty()) {
+        return true;
+    }
+
+    QSettings settings(iniPath, QSettings::IniFormat);
+    const QVariant val = settings.value(QStringLiteral("common/AIVisionSharedMemoryEnabled"), true);
+    if (val.userType() == QMetaType::Bool) {
+        return val.toBool();
+    }
+    const QString text = val.toString().trimmed().toLower();
+    if (text == QLatin1String("false") || text == QLatin1String("0") || text == QLatin1String("off") || text == QLatin1String("no")) {
+        return false;
+    }
+    return true;
+}
 } // namespace
 
 AIVisionPublisher::AIVisionPublisher()
 {
-    m_bgrBuffer.resize(kMaxPayloadBytes);
+    m_enabled = readAIVisionSharedMemoryEnabled();
+    if (m_enabled) {
+        m_bgrBuffer.resize(kMaxPayloadBytes);
+    }
 }
 
 AIVisionPublisher::~AIVisionPublisher()
@@ -30,6 +78,7 @@ AIVisionPublisher::~AIVisionPublisher()
 
 void AIVisionPublisher::cleanup()
 {
+    std::lock_guard<std::mutex> lock(sharedPublishMutex());
     if (m_swsContext) {
         sws_freeContext(m_swsContext);
         m_swsContext = nullptr;
@@ -86,6 +135,9 @@ bool AIVisionPublisher::ensureMappingReady()
         header->version = kVersion;
         header->header_bytes = static_cast<uint16_t>(sizeof(ScrcpyAIVisionHeaderV1));
         header->seq = 0;
+    } else if ((header->seq & 1u) != 0u) {
+        // Recover stale odd seqlock left by an interrupted writer process.
+        InterlockedIncrement(reinterpret_cast<volatile LONG *>(&header->seq));
     }
 
     m_mappingReady = true;
@@ -182,6 +234,11 @@ bool AIVisionPublisher::prepareBgrRoi(const AVFrame *frame, int &roiX, int &roiY
 
 void AIVisionPublisher::publishBestEffort(const AVFrame *frame)
 {
+    if (!m_enabled) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(sharedPublishMutex());
     if (!ensureMappingReady()) {
         return;
     }
@@ -208,8 +265,13 @@ void AIVisionPublisher::publishBestEffort(const AVFrame *frame)
     auto *header = reinterpret_cast<ScrcpyAIVisionHeaderV1 *>(m_sharedBase);
     auto *payload = m_sharedBase + sizeof(ScrcpyAIVisionHeaderV1);
 
+    if ((header->seq & 1u) != 0u) {
+        InterlockedIncrement(reinterpret_cast<volatile LONG *>(&header->seq));
+    }
+
     // lock-free writer protocol: odd while writing, even when stable.
-    header->seq += 1;
+    InterlockedIncrement(reinterpret_cast<volatile LONG *>(&header->seq));
+    MemoryBarrier();
 
     header->magic = kMagic;
     header->version = kVersion;
@@ -230,7 +292,8 @@ void AIVisionPublisher::publishBestEffort(const AVFrame *frame)
 
     std::memcpy(payload, m_bgrBuffer.data(), payloadBytes);
 
-    header->seq += 1;
+    MemoryBarrier();
+    InterlockedIncrement(reinterpret_cast<volatile LONG *>(&header->seq));
 #else
     (void)frame;
 #endif

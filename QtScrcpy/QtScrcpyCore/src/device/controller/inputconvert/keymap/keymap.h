@@ -1,5 +1,6 @@
 #ifndef KEYMAP_H
 #define KEYMAP_H
+#include <cstring>
 #include <QJsonObject>
 #include <QMetaEnum>
 #include <QMultiHash>
@@ -112,7 +113,7 @@ public:
             {
                 KeyNode keyNode;
             } androidKey;
-            DATA() {}
+            DATA() { std::memset(this, 0, sizeof(*this)); }
             ~DATA() {}
         } data;
 

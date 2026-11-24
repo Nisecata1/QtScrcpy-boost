@@ -26,6 +26,11 @@ bool MagneticWidget::isAdsorbed()
     return m_adsorbed;
 }
 
+void MagneticWidget::setAutoShowWithTarget(bool enabled)
+{
+    m_autoShowWithTarget = enabled;
+}
+
 bool MagneticWidget::eventFilter(QObject *watched, QEvent *event)
 {
     if (watched != m_adsorbWidget || !event) {
@@ -38,9 +43,11 @@ bool MagneticWidget::eventFilter(QObject *watched, QEvent *event)
     if (m_adsorbed && QEvent::Move == event->type()) {
         move(m_adsorbWidget->pos() - m_relativePos);
     }
-    if (m_adsorbed && (QEvent::Show == event->type() || QEvent::FocusIn == event->type())) {
-        show();
-        raise();
+    if (m_adsorbed && m_autoShowWithTarget && (QEvent::Show == event->type() || QEvent::FocusIn == event->type())) {
+        if (!m_adsorbWidget->isFullScreen()) {
+            show();
+            raise();
+        }
     }
     if (m_adsorbed && QEvent::Resize == event->type()) {
         QRect parentRect;

@@ -144,6 +144,7 @@ protected:
     void keyReleaseEvent(QKeyEvent *event) override;
 
     void paintEvent(QPaintEvent *) override;
+    void changeEvent(QEvent *event) override;
     void showEvent(QShowEvent *event) override;
     void moveEvent(QMoveEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
@@ -223,6 +224,8 @@ private:
 
     bool m_cursorGrabbed = false;
     bool m_manualCursorLocked = false;
+    bool m_cursorClippedBySelf = false;
+    QRect m_lastCursorClipRect;
     bool m_rawInputEnabled = true;
     bool m_rawInputRegistered = false;
     bool m_rawInputActive = false;

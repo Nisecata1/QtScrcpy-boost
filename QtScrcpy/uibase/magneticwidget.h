@@ -33,6 +33,7 @@ public:
     ~MagneticWidget();
 
     bool isAdsorbed();
+    void setAutoShowWithTarget(bool enabled);
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -45,6 +46,7 @@ private:
     AdsorbPositions m_adsorbPos = AP_ALL;
     QPoint m_relativePos;
     bool m_adsorbed = false;
+    bool m_autoShowWithTarget = true;
     QPointer<QWidget> m_adsorbWidget;
     // 单独记录adsorbWidgetSize，因为Widget setGeometry的时候，会先收到Move事件，后收到Resize事件，
     // 但是收到Move事件时Widget的size()已经是setGeometry指定的size了

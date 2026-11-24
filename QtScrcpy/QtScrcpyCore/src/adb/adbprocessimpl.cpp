@@ -55,6 +55,11 @@ const QString &AdbProcessImpl::getAdbPath()
     return s_adbPath;
 }
 
+void AdbProcessImpl::clearAdbPathCache()
+{
+    s_adbPath.clear();
+}
+
 void AdbProcessImpl::initSignals()
 {
     // aboutToQuit not exit event loop, so deletelater is ok
@@ -81,15 +86,21 @@ void AdbProcessImpl::initSignals()
     });
 
     connect(this, &QProcess::readyReadStandardError, this, [this]() {
-        QString tmp = QString::fromUtf8(readAllStandardError()).trimmed();
-        m_errorOutput += tmp;
-        qWarning() << QString("AdbProcessImpl::error:%1").arg(tmp).toStdString().data();
+        const QString chunk = QString::fromUtf8(readAllStandardError());
+        m_errorOutput += chunk;
+        const QString trimmed = chunk.trimmed();
+        if (!trimmed.isEmpty()) {
+            qWarning().noquote() << QStringLiteral("AdbProcessImpl::error:%1").arg(trimmed);
+        }
     });
 
     connect(this, &QProcess::readyReadStandardOutput, this, [this]() {
-        QString tmp = QString::fromUtf8(readAllStandardOutput()).trimmed();
-        m_standardOutput += tmp;
-        qInfo() << QString("AdbProcessImpl::out:%1").arg(tmp).toStdString().data();
+        const QString chunk = QString::fromUtf8(readAllStandardOutput());
+        m_standardOutput += chunk;
+        const QString trimmed = chunk.trimmed();
+        if (!trimmed.isEmpty()) {
+            qInfo().noquote() << QStringLiteral("AdbProcessImpl::out:%1").arg(trimmed);
+        }
     });
 
     connect(this, &QProcess::started, this, [this]() { emit adbProcessImplResult(qsc::AdbProcess::AER_SUCCESS_START); });
@@ -141,10 +152,10 @@ QStringList AdbProcessImpl::getDevicesSerialFromStdOut()
     QRegularExpression tExp("\t");
 #endif
     QStringList devicesInfoList = m_standardOutput.split(lineExp);
-    for (QString deviceInfo : devicesInfoList) {
+    for (const QString &deviceInfo : devicesInfoList) {
         QStringList deviceInfos = deviceInfo.split(tExp);
-        if (2 == deviceInfos.count() && 0 == deviceInfos[1].compare("device")) {
-            serials << deviceInfos[0];
+        if (2 == deviceInfos.count() && 0 == deviceInfos[1].trimmed().compare("device")) {
+            serials << deviceInfos[0].trimmed();
         }
     }
     return serials;

@@ -19,10 +19,11 @@ void WinMouseTap::enableMouseEventTap(QRect rc, bool enabled)
     }
     if (enabled) {
         RECT mainRect;
-        mainRect.left = (LONG)rc.left();
-        mainRect.right = (LONG)rc.right();
-        mainRect.top = (LONG)rc.top();
-        mainRect.bottom = (LONG)rc.bottom();
+        mainRect.left = static_cast<LONG>(rc.left());
+        mainRect.top = static_cast<LONG>(rc.top());
+        // Win32 ClipCursor uses exclusive right/bottom bounds.
+        mainRect.right = static_cast<LONG>(rc.left() + rc.width());
+        mainRect.bottom = static_cast<LONG>(rc.top() + rc.height());
         ClipCursor(&mainRect);
     } else {
         ClipCursor(Q_NULLPTR);

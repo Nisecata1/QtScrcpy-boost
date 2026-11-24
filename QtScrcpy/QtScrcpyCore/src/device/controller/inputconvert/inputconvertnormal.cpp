@@ -79,7 +79,9 @@ void InputConvertNormal::mouseEvent(const QMouseEvent *from, const QSize &frameS
     }
 
     reloadNormalMouseCompatConfigIfNeeded();
-    flushPendingNormalTapRelease();
+    if (from->type() != QEvent::MouseMove) {
+        flushPendingNormalTapRelease();
+    }
 
     if (useThrottledNormalCursorFeedback() && m_remoteCursorEnabled) {
         switch (from->type()) {
@@ -145,7 +147,11 @@ void InputConvertNormal::mouseEvent(const QMouseEvent *from, const QSize &frameS
                                      false,
                                      useNormalMouseTouchPriority() ? kTouchControlPriority : Qt::NormalEventPriority);
     if (sent && action == AMOTION_EVENT_ACTION_UP && m_remoteCursorEnabled) {
-        sendCursorPositionFromMouseEvent(from, frameSize, showSize);
+        if (useThrottledNormalCursorFeedback()) {
+            queueCursorPositionFromMouseEvent(from, frameSize, showSize);
+        } else {
+            sendCursorPositionFromMouseEvent(from, frameSize, showSize);
+        }
     }
 
     // Pinch-to-zoom / tilt simulation (ported from upstream scrcpy/QtScrcpyCore):
@@ -319,7 +325,6 @@ void InputConvertNormal::handleConfiguredCursorFeedback(const QMouseEvent *from,
     }
 
     reloadNormalMouseCompatConfigIfNeeded();
-    flushPendingNormalTapRelease();
 
     if (m_remoteCursorEnabled) {
         if (useThrottledNormalCursorFeedback() && !m_remoteCursorThrottleLogPrinted) {

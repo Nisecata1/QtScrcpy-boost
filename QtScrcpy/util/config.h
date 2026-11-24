@@ -73,6 +73,7 @@ public:
     int getDesktopOpenGL();
     int getSkin();
     int getRenderExpiredFrames();
+    bool getAIVisionSharedMemoryEnabled();
     QString getPushFilePath();
     QString getServerPath();
     QString getAdbPath();
