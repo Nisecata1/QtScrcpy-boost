@@ -90,6 +90,20 @@ QString recordButtonToolTip(const QString &bindingName, bool listening, const QS
     return toolTip;
 }
 
+bool isBareModifierKey(int key)
+{
+    switch (key) {
+    case Qt::Key_Control:
+    case Qt::Key_Shift:
+    case Qt::Key_Alt:
+    case Qt::Key_Meta:
+    case Qt::Key_AltGr:
+        return true;
+    default:
+        return false;
+    }
+}
+
 bool keyEventMatchesShortcut(const QKeyEvent *keyEvent, const QKeySequence &shortcut)
 {
     if (!keyEvent) {
@@ -155,21 +169,21 @@ KeymapEditorPanel::KeymapEditorPanel(QWidget *parent)
     separator->setFrameShape(QFrame::HLine);
     rootLayout->addWidget(separator);
 
-    QFormLayout *formLayout = new QFormLayout();
-    formLayout->setLabelAlignment(Qt::AlignLeft);
-    formLayout->setFormAlignment(Qt::AlignTop);
+    m_formLayout = new QFormLayout();
+    m_formLayout->setLabelAlignment(Qt::AlignLeft);
+    m_formLayout->setFormAlignment(Qt::AlignTop);
 
     m_commentEdit = new QLineEdit(this);
     m_commentEdit->setToolTip(tr("编辑当前节点的备注说明。只在该节点支持注释且不是只读时可修改。"));
-    formLayout->addRow(QStringLiteral("Comment"), m_commentEdit);
+    m_formLayout->addRow(QStringLiteral("Comment"), m_commentEdit);
 
     m_alwaysActiveCheck = new QCheckBox(QStringLiteral("Always Active"), this);
     m_alwaysActiveCheck->setToolTip(tr("让当前节点始终保持激活，不受常规切换状态影响。只有支持该属性的节点才会显示。"));
-    formLayout->addRow(QString(), m_alwaysActiveCheck);
+    m_formLayout->addRow(QString(), m_alwaysActiveCheck);
 
     m_switchMapCheck = new QCheckBox(QStringLiteral("Switch Map"), this);
     m_switchMapCheck->setToolTip(tr("把当前节点作为切换映射用的开关。只有支持该属性的节点才会显示。"));
-    formLayout->addRow(QString(), m_switchMapCheck);
+    m_formLayout->addRow(QString(), m_switchMapCheck);
 
     auto makeRecordRow = [this](QLineEdit *&edit, QPushButton *&button, const QString &buttonText) -> QWidget * {
         QWidget *rowWidget = new QWidget(this);
@@ -184,11 +198,11 @@ KeymapEditorPanel::KeymapEditorPanel(QWidget *parent)
         return rowWidget;
     };
 
-    formLayout->addRow(QStringLiteral("Primary Key"), makeRecordRow(m_primaryKeyEdit, m_primaryRecordBtn, QStringLiteral("Record")));
-    formLayout->addRow(QStringLiteral("Left Key"), makeRecordRow(m_leftKeyEdit, m_leftRecordBtn, QStringLiteral("Record")));
-    formLayout->addRow(QStringLiteral("Right Key"), makeRecordRow(m_rightKeyEdit, m_rightRecordBtn, QStringLiteral("Record")));
-    formLayout->addRow(QStringLiteral("Up Key"), makeRecordRow(m_upKeyEdit, m_upRecordBtn, QStringLiteral("Record")));
-    formLayout->addRow(QStringLiteral("Down Key"), makeRecordRow(m_downKeyEdit, m_downRecordBtn, QStringLiteral("Record")));
+    m_formLayout->addRow(QStringLiteral("Primary Key"), makeRecordRow(m_primaryKeyEdit, m_primaryRecordBtn, QStringLiteral("Record")));
+    m_formLayout->addRow(QStringLiteral("Left Key"), makeRecordRow(m_leftKeyEdit, m_leftRecordBtn, QStringLiteral("Record")));
+    m_formLayout->addRow(QStringLiteral("Right Key"), makeRecordRow(m_rightKeyEdit, m_rightRecordBtn, QStringLiteral("Record")));
+    m_formLayout->addRow(QStringLiteral("Up Key"), makeRecordRow(m_upKeyEdit, m_upRecordBtn, QStringLiteral("Record")));
+    m_formLayout->addRow(QStringLiteral("Down Key"), makeRecordRow(m_downKeyEdit, m_downRecordBtn, QStringLiteral("Record")));
     m_primaryKeyEdit->setToolTip(bindingDisplayToolTip(tr("主键位")));
     m_leftKeyEdit->setToolTip(bindingDisplayToolTip(tr("左方向键位")));
     m_rightKeyEdit->setToolTip(bindingDisplayToolTip(tr("右方向键位")));
@@ -203,16 +217,16 @@ KeymapEditorPanel::KeymapEditorPanel(QWidget *parent)
     m_androidKeySpin = new QSpinBox(this);
     m_androidKeySpin->setRange(0, 500);
     m_androidKeySpin->setToolTip(tr("设置当前节点要发送的 Android KeyCode 数值。只有 Android Key 节点才会显示。"));
-    formLayout->addRow(QStringLiteral("Android Key"), m_androidKeySpin);
+    m_formLayout->addRow(QStringLiteral("Android Key"), m_androidKeySpin);
 
     m_primaryPosLabel = new QLabel(this);
     m_secondaryPosLabel = new QLabel(this);
     m_smallEyesPosLabel = new QLabel(this);
-    formLayout->addRow(QStringLiteral("Primary Pos"), m_primaryPosLabel);
-    formLayout->addRow(QStringLiteral("Secondary Pos"), m_secondaryPosLabel);
-    formLayout->addRow(QStringLiteral("SmallEyes Pos"), m_smallEyesPosLabel);
+    m_formLayout->addRow(QStringLiteral("Primary Pos"), m_primaryPosLabel);
+    m_formLayout->addRow(QStringLiteral("Secondary Pos"), m_secondaryPosLabel);
+    m_formLayout->addRow(QStringLiteral("SmallEyes Pos"), m_smallEyesPosLabel);
 
-    rootLayout->addLayout(formLayout);
+    rootLayout->addLayout(m_formLayout);
 
     m_recordingHintLabel = new QLabel(this);
     m_recordingHintLabel->hide();
@@ -384,7 +398,6 @@ void KeymapEditorPanel::setCloseShortcut(const QKeySequence &shortcut)
 
 bool KeymapEditorPanel::eventFilter(QObject *watched, QEvent *event)
 {
-    Q_UNUSED(watched)
     if (!m_recordingActive || m_selectedNodeId < 0) {
         return QWidget::eventFilter(watched, event);
     }
@@ -392,6 +405,9 @@ bool KeymapEditorPanel::eventFilter(QObject *watched, QEvent *event)
     switch (event->type()) {
     case QEvent::ShortcutOverride: {
         QKeyEvent *keyEvent = static_cast<QKeyEvent *>(event);
+        if (isBareModifierKey(keyEvent->key())) {
+            return false;
+        }
         if (matchesCloseShortcut(keyEvent)) {
             event->accept();
             return false;
@@ -401,6 +417,9 @@ bool KeymapEditorPanel::eventFilter(QObject *watched, QEvent *event)
     }
     case QEvent::KeyPress: {
         QKeyEvent *keyEvent = static_cast<QKeyEvent *>(event);
+        if (isBareModifierKey(keyEvent->key())) {
+            return false;
+        }
         if (matchesCloseShortcut(keyEvent)) {
             setRecordingState(false);
             emit closeRequested();
@@ -418,10 +437,22 @@ bool KeymapEditorPanel::eventFilter(QObject *watched, QEvent *event)
         event->accept();
         return true;
     }
-    case QEvent::KeyRelease:
+    case QEvent::KeyRelease: {
+        QKeyEvent *keyEvent = static_cast<QKeyEvent *>(event);
+        if (isBareModifierKey(keyEvent->key())) {
+            return false;
+        }
         event->accept();
         return true;
+    }
     case QEvent::MouseButtonPress: {
+        QWidget *watchedWidget = qobject_cast<QWidget *>(watched);
+        if (!watched || !watched->isWidgetType()) {
+            return QWidget::eventFilter(watched, event);
+        }
+        if (watchedWidget && (watchedWidget == this || this->isAncestorOf(watchedWidget))) {
+            return QWidget::eventFilter(watched, event);
+        }
         QMouseEvent *mouseEvent = static_cast<QMouseEvent *>(event);
         const QString jsonKey = KeymapKeyCodec::encodeMouseButton(static_cast<int>(mouseEvent->button()));
         if (!jsonKey.isEmpty()) {
@@ -430,9 +461,17 @@ bool KeymapEditorPanel::eventFilter(QObject *watched, QEvent *event)
         event->accept();
         return true;
     }
-    case QEvent::MouseButtonRelease:
+    case QEvent::MouseButtonRelease: {
+        QWidget *watchedWidget = qobject_cast<QWidget *>(watched);
+        if (!watched || !watched->isWidgetType()) {
+            return QWidget::eventFilter(watched, event);
+        }
+        if (watchedWidget && (watchedWidget == this || this->isAncestorOf(watchedWidget))) {
+            return QWidget::eventFilter(watched, event);
+        }
         event->accept();
         return true;
+    }
     default:
         break;
     }
@@ -527,25 +566,43 @@ void KeymapEditorPanel::refreshSelection()
     updateRecordingButtons();
 }
 
+void KeymapEditorPanel::setFormRowVisible(QWidget *field, bool visible)
+{
+    if (!field) {
+        return;
+    }
+
+    if (m_formLayout) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 4, 0)
+        m_formLayout->setRowVisible(field, visible);
+        return;
+#else
+        if (QWidget *label = m_formLayout->labelForField(field)) {
+            label->setVisible(visible);
+        }
+#endif
+    }
+    field->setVisible(visible);
+}
+
 void KeymapEditorPanel::refreshPropertyVisibility(const KeymapEditorDocument::NodeInfo &info)
 {
     const bool hasSelection = info.id >= 0;
     m_commentEdit->setEnabled(hasSelection && info.supportsComment && !info.readOnly);
-    m_alwaysActiveCheck->setVisible(hasSelection && info.supportsAlwaysActive);
+    setFormRowVisible(m_alwaysActiveCheck, hasSelection && info.supportsAlwaysActive);
     m_alwaysActiveCheck->setEnabled(hasSelection && info.supportsAlwaysActive && !info.readOnly);
-    m_switchMapCheck->setVisible(hasSelection && info.supportsSwitchMap);
+    setFormRowVisible(m_switchMapCheck, hasSelection && info.supportsSwitchMap);
     m_switchMapCheck->setEnabled(hasSelection && info.supportsSwitchMap && !info.readOnly);
 
-    m_primaryKeyEdit->parentWidget()->setVisible(hasSelection && info.supportsPrimaryKey);
-    m_leftKeyEdit->parentWidget()->setVisible(hasSelection && info.supportsDirectionalKeys);
-    m_rightKeyEdit->parentWidget()->setVisible(hasSelection && info.supportsDirectionalKeys);
-    m_upKeyEdit->parentWidget()->setVisible(hasSelection && info.supportsDirectionalKeys);
-    m_downKeyEdit->parentWidget()->setVisible(hasSelection && info.supportsDirectionalKeys);
-    m_androidKeySpin->setVisible(hasSelection && info.supportsAndroidKey);
-    m_androidKeySpin->parentWidget()->setVisible(hasSelection && info.supportsAndroidKey);
-    m_primaryPosLabel->setVisible(hasSelection && info.hasPrimaryPos);
-    m_secondaryPosLabel->setVisible(hasSelection && info.hasSecondaryPos);
-    m_smallEyesPosLabel->setVisible(hasSelection && info.hasSmallEyesPos);
+    setFormRowVisible(m_primaryKeyEdit->parentWidget(), hasSelection && info.supportsPrimaryKey);
+    setFormRowVisible(m_leftKeyEdit->parentWidget(), hasSelection && info.supportsDirectionalKeys);
+    setFormRowVisible(m_rightKeyEdit->parentWidget(), hasSelection && info.supportsDirectionalKeys);
+    setFormRowVisible(m_upKeyEdit->parentWidget(), hasSelection && info.supportsDirectionalKeys);
+    setFormRowVisible(m_downKeyEdit->parentWidget(), hasSelection && info.supportsDirectionalKeys);
+    setFormRowVisible(m_androidKeySpin, hasSelection && info.supportsAndroidKey);
+    setFormRowVisible(m_primaryPosLabel, hasSelection && info.hasPrimaryPos);
+    setFormRowVisible(m_secondaryPosLabel, hasSelection && info.hasSecondaryPos);
+    setFormRowVisible(m_smallEyesPosLabel, hasSelection && info.hasSmallEyesPos);
 }
 
 void KeymapEditorPanel::refreshPositionLabels(const KeymapEditorDocument::NodeInfo &info)

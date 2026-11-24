@@ -46,6 +46,7 @@ protected:
 
 private:
     void applyTheme();
+    void setFormRowVisible(QWidget *field, bool visible);
     void rebuildNodeList();
     void refreshSelection();
     void refreshPropertyVisibility(const KeymapEditorDocument::NodeInfo &info);
@@ -64,6 +65,7 @@ private:
     bool m_recordingActive = false;
 
     QLabel *m_titleLabel = nullptr;
+    QFormLayout *m_formLayout = nullptr;
     QListWidget *m_nodeList = nullptr;
     QComboBox *m_addTypeBox = nullptr;
     QPushButton *m_addNodeBtn = nullptr;

@@ -1,3 +1,5 @@
+#include <cstring>
+
 #include <QDebug>
 
 #include "bufferutil.h"
@@ -7,18 +9,35 @@
 #define MAX(X, Y) ((X) > (Y) ? (X) : (Y))
 #define CLAMP(V, X, Y) MIN(MAX((V), (X)), (Y))
 
+namespace {
+QByteArray truncateUtf8Bytes(const QString &text, int maxBytes)
+{
+    QByteArray utf8 = text.toUtf8();
+    if (utf8.size() <= maxBytes) {
+        return utf8;
+    }
+    int end = qMax(0, maxBytes);
+    while (end > 0 && (static_cast<unsigned char>(utf8.at(end)) & 0xC0) == 0x80) {
+        --end;
+    }
+    utf8.truncate(end);
+    return utf8;
+}
+}
+
 ControlMsg::ControlMsg(ControlMsgType controlMsgType) : QScrcpyEvent(Control)
 {
+    std::memset(&m_data, 0, sizeof(m_data));
     m_data.type = controlMsgType;
 }
 
 ControlMsg::~ControlMsg()
 {
     if (CMT_SET_CLIPBOARD == m_data.type && Q_NULLPTR != m_data.setClipboard.text) {
-        delete m_data.setClipboard.text;
+        delete [] m_data.setClipboard.text;
         m_data.setClipboard.text = Q_NULLPTR;
     } else if (CMT_INJECT_TEXT == m_data.type && Q_NULLPTR != m_data.injectText.text) {
-        delete m_data.injectText.text;
+        delete [] m_data.injectText.text;
         m_data.injectText.text = Q_NULLPTR;
     }
 }
@@ -33,14 +52,15 @@ void ControlMsg::setInjectKeycodeMsgData(AndroidKeyeventAction action, AndroidKe
 
 void ControlMsg::setInjectTextMsgData(QString &text)
 {
-    // write length (2 byte) + string (non nul-terminated)
-    if (CONTROL_MSG_INJECT_TEXT_MAX_LENGTH < text.length()) {
-        // injecting a text takes time, so limit the text length
-        text = text.left(CONTROL_MSG_INJECT_TEXT_MAX_LENGTH);
+    delete [] m_data.injectText.text;
+    m_data.injectText.text = Q_NULLPTR;
+
+    const QByteArray tmp = truncateUtf8Bytes(text, CONTROL_MSG_INJECT_TEXT_MAX_LENGTH);
+    if (tmp.size() != text.toUtf8().size()) {
+        text = QString::fromUtf8(tmp);
     }
-    QByteArray tmp = text.toUtf8();
-    m_data.injectText.text = new char[tmp.length() + 1];
-    memcpy(m_data.injectText.text, tmp.data(), tmp.length());
+    m_data.injectText.text = new char[static_cast<size_t>(tmp.length()) + 1];
+    memcpy(m_data.injectText.text, tmp.data(), static_cast<size_t>(tmp.length()));
     m_data.injectText.text[tmp.length()] = '\0';
 }
 
@@ -75,20 +95,22 @@ void ControlMsg::setGetClipboardMsgData(ControlMsg::GetClipboardCopyKey copyKey)
 
 void ControlMsg::setSetClipboardMsgData(QString &text, bool paste)
 {
-    if (text.isEmpty()) {
-        m_data.setClipboard.text = Q_NULLPTR;
-        return;
-    }
-    if (CONTROL_MSG_CLIPBOARD_TEXT_MAX_LENGTH < text.length()) {
-        text = text.left(CONTROL_MSG_CLIPBOARD_TEXT_MAX_LENGTH);
-    }
-
-    QByteArray tmp = text.toUtf8();
-    m_data.setClipboard.text = new char[tmp.length() + 1];
-    memcpy(m_data.setClipboard.text, tmp.data(), tmp.length());
-    m_data.setClipboard.text[tmp.length()] = '\0';
+    delete [] m_data.setClipboard.text;
+    m_data.setClipboard.text = Q_NULLPTR;
     m_data.setClipboard.paste = paste;
     m_data.setClipboard.sequence = 0;
+
+    if (text.isEmpty()) {
+        return;
+    }
+
+    const QByteArray tmp = truncateUtf8Bytes(text, CONTROL_MSG_CLIPBOARD_TEXT_MAX_LENGTH);
+    if (tmp.size() != text.toUtf8().size()) {
+        text = QString::fromUtf8(tmp);
+    }
+    m_data.setClipboard.text = new char[static_cast<size_t>(tmp.length()) + 1];
+    memcpy(m_data.setClipboard.text, tmp.data(), static_cast<size_t>(tmp.length()));
+    m_data.setClipboard.text[tmp.length()] = '\0';
 }
 
 void ControlMsg::setDisplayPowerData(bool on)
@@ -159,8 +181,13 @@ QByteArray ControlMsg::serializeData()
         BufferUtil::write32(buffer, m_data.injectKeycode.metastate);
         break;
     case CMT_INJECT_TEXT:
-        BufferUtil::write32(buffer, static_cast<quint32>(strlen(m_data.injectText.text)));
-        buffer.write(m_data.injectText.text, strlen(m_data.injectText.text));
+        if (m_data.injectText.text != Q_NULLPTR) {
+            const size_t len = strlen(m_data.injectText.text);
+            BufferUtil::write32(buffer, static_cast<quint32>(len));
+            buffer.write(m_data.injectText.text, static_cast<qint64>(len));
+        } else {
+            BufferUtil::write32(buffer, 0);
+        }
         break;
     case CMT_INJECT_TOUCH: {
         buffer.putChar(m_data.injectTouch.action);
@@ -195,11 +222,11 @@ QByteArray ControlMsg::serializeData()
         BufferUtil::write64(buffer, m_data.setClipboard.sequence);
         buffer.putChar(!!m_data.setClipboard.paste);
         if (m_data.setClipboard.text != Q_NULLPTR) {
-            BufferUtil::write32(buffer, static_cast<quint32>(strlen(m_data.setClipboard.text)));
-            buffer.write(m_data.setClipboard.text, strlen(m_data.setClipboard.text));
+            const size_t len = strlen(m_data.setClipboard.text);
+            BufferUtil::write32(buffer, static_cast<quint32>(len));
+            buffer.write(m_data.setClipboard.text, static_cast<qint64>(len));
         } else {
             BufferUtil::write32(buffer, 0);
-            buffer.write(m_data.setClipboard.text, 0);
         }
         break;
     case CMT_SET_DISPLAY_POWER:

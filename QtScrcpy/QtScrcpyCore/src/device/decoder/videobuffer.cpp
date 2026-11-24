@@ -113,43 +113,45 @@ void VideoBuffer::peekRenderedFrame(std::function<void(int width, int height, ui
         return;
     }
 
-    lock();
-    auto frame = m_renderingframe;
-    int width = frame->width;
-    int height = frame->height;
-    int linesize = frame->linesize[0];
+    int width = 0;
+    int height = 0;
+    uint8_t *rgbBuffer = Q_NULLPTR;
+    {
+        QMutexLocker locker(&m_mutex);
+        auto frame = m_renderingframe;
+        if (!frame || frame->width <= 0 || frame->height <= 0 || !frame->data[0]) {
+            return;
+        }
+        width = frame->width;
+        height = frame->height;
+        const int bufSize = av_image_get_buffer_size(AV_PIX_FMT_RGB32, width, height, 4);
+        if (bufSize <= 0) {
+            return;
+        }
 
-    // create buffer
-    uint8_t* rgbBuffer = new uint8_t[linesize * height * 4];
-    AVFrame *rgbFrame = av_frame_alloc();
-    if (!rgbFrame) {
-        delete [] rgbBuffer;
-        return;
-    }
+        // create buffer
+        rgbBuffer = new uint8_t[static_cast<size_t>(bufSize)];
+        AVFrame *rgbFrame = av_frame_alloc();
+        if (!rgbFrame) {
+            delete [] rgbBuffer;
+            return;
+        }
 
-    // bind buffer to AVFrame
-    av_image_fill_arrays(rgbFrame->data, rgbFrame->linesize, rgbBuffer, AV_PIX_FMT_RGB32, width, height, 4);
+        // bind buffer to AVFrame
+        av_image_fill_arrays(rgbFrame->data, rgbFrame->linesize, rgbBuffer, AV_PIX_FMT_RGB32, width, height, 4);
 
-    // convert
-    AVFrameConvert convert;
-    convert.setSrcFrameInfo(width, height, AV_PIX_FMT_YUV420P);
-    convert.setDstFrameInfo(width, height, AV_PIX_FMT_RGB32);
-    bool ret = false;
-    ret = convert.init();
-    if (!ret) {
-        delete [] rgbBuffer;
-        av_free(rgbFrame);
-        return;
+        // convert
+        AVFrameConvert convert;
+        convert.setSrcFrameInfo(width, height, AV_PIX_FMT_YUV420P);
+        convert.setDstFrameInfo(width, height, AV_PIX_FMT_RGB32);
+        if (!convert.init() || !convert.convert(frame, rgbFrame)) {
+            av_frame_free(&rgbFrame);
+            delete [] rgbBuffer;
+            return;
+        }
+        convert.deInit();
+        av_frame_free(&rgbFrame);
     }
-    ret = convert.convert(frame, rgbFrame);
-    if (!ret) {
-        delete [] rgbBuffer;
-        av_free(rgbFrame);
-        return;
-    }
-    convert.deInit();
-    av_free(rgbFrame);
-    unLock();
 
     onFrame(width, height, rgbBuffer);
     delete [] rgbBuffer;

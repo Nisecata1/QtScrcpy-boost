@@ -16,13 +16,22 @@ Decoder::Decoder(std::function<void(int, int, uint8_t*, uint8_t*, uint8_t*, int,
     connect(m_vb, &VideoBuffer::updateFPS, this, &Decoder::updateFPS);
 }
 
-Decoder::~Decoder() {
-    m_vb->deInit();
-    delete m_vb;
+Decoder::~Decoder()
+{
+    close();
+    if (m_vb) {
+        m_vb->deInit();
+        delete m_vb;
+        m_vb = Q_NULLPTR;
+    }
 }
 
 bool Decoder::open()
 {
+    if (m_codecCtx) {
+        close();
+    }
+
     // codec
     const AVCodec* codec = avcodec_find_decoder(AV_CODEC_ID_H264);
     if (!codec) {
@@ -38,6 +47,8 @@ bool Decoder::open()
     }
     if (avcodec_open2(m_codecCtx, codec, NULL) < 0) {
         qCritical("Could not open H.264 codec");
+        avcodec_free_context(&m_codecCtx);
+        m_isCodecCtxOpen = false;
         return false;
     }
     m_isCodecCtxOpen = true;
@@ -51,10 +62,12 @@ void Decoder::close()
     }
 
     if (!m_codecCtx) {
+        m_isCodecCtxOpen = false;
         return;
     }
     if (m_isCodecCtxOpen) {
         avcodec_close(m_codecCtx);
+        m_isCodecCtxOpen = false;
     }
     avcodec_free_context(&m_codecCtx);
 }

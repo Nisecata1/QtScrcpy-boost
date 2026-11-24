@@ -3,6 +3,7 @@
 #include <QElapsedTimer>
 #include <QHostAddress>
 #include <QTcpSocket>
+#include <QTimer>
 #include <QTime>
 
 #if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
@@ -34,6 +35,7 @@ AudioOutput::~AudioOutput()
 {
     if (QProcess::NotRunning != m_sndcpy.state()) {
         m_sndcpy.kill();
+        m_sndcpy.waitForFinished(1000);
     }
     stop();
 }
@@ -79,10 +81,12 @@ bool AudioOutput::runSndcpyProcess(const QString &serial, int port, bool wait)
 {
     if (QProcess::NotRunning != m_sndcpy.state()) {
         m_sndcpy.kill();
+        m_sndcpy.waitForFinished(1000);
     }
 
 #ifdef Q_OS_WIN32
     QStringList params{serial, QString::number(port)};
+    m_sndcpy.setWorkingDirectory(QCoreApplication::applicationDirPath());
     m_sndcpy.start("sndcpy.bat", params);
 #else
     QStringList params{"sndcpy.sh", serial, QString::number(port)};
@@ -178,39 +182,30 @@ void AudioOutput::stopAudioOutput()
 
 void AudioOutput::startRecvData(int port)
 {
-    if (m_workerThread.isRunning()) {
-        stopRecvData();
-    }
+    stopRecvData();
 
-    auto audioSocket = new QTcpSocket();
-    audioSocket->moveToThread(&m_workerThread);
-    connect(&m_workerThread, &QThread::finished, audioSocket, &QObject::deleteLater);
+    QTcpSocket *audioSocket = new QTcpSocket(this);
+    m_audioSocket = audioSocket;
 
-    connect(this, &AudioOutput::connectTo, audioSocket, [audioSocket](int port) {
-        audioSocket->connectToHost(QHostAddress::LocalHost, port);
-        if (!audioSocket->waitForConnected(500)) {
-            qWarning("AudioOutput::audio socket connect failed");
-            return;
-        }
+    connect(audioSocket, &QTcpSocket::connected, this, []() {
         qInfo("AudioOutput::audio socket connect success");
     });
-    connect(audioSocket, &QIODevice::readyRead, audioSocket, [this, audioSocket]() {
-        qint64 recv = audioSocket->bytesAvailable();
-        //qDebug() << "AudioOutput::recv data:" << recv;
-
-        if (!m_outputDevice) {
+    connect(audioSocket, &QIODevice::readyRead, this, [this, audioSocket]() {
+        const qint64 recv = audioSocket->bytesAvailable();
+        if (recv <= 0 || !m_outputDevice) {
             return;
         }
-        if (m_buffer.capacity() < recv) {
-            m_buffer.reserve(recv);
+        if (m_buffer.size() < recv) {
+            m_buffer.resize(static_cast<qsizetype>(recv));
         }
 
-        qint64 count = audioSocket->read(m_buffer.data(), recv);
-        m_outputDevice->write(m_buffer.data(), count);
+        const qint64 count = audioSocket->read(m_buffer.data(), recv);
+        if (count > 0 && m_outputDevice) {
+            m_outputDevice->write(m_buffer.constData(), count);
+        }
     });
     connect(audioSocket, &QTcpSocket::stateChanged, audioSocket, [](QAbstractSocket::SocketState state) {
         qInfo() << "AudioOutput::audio socket state changed:" << state;
-
     });
 #if QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
     connect(audioSocket, &QTcpSocket::errorOccurred, audioSocket, [](QAbstractSocket::SocketError error) {
@@ -222,16 +217,25 @@ void AudioOutput::startRecvData(int port)
     });
 #endif
 
-    m_workerThread.start();
-    emit connectTo(port);
+    QPointer<QTcpSocket> socketGuard(audioSocket);
+    QTimer::singleShot(500, audioSocket, [socketGuard]() {
+        if (socketGuard && socketGuard->state() != QAbstractSocket::ConnectedState) {
+            qWarning("AudioOutput::audio socket connect failed");
+        }
+    });
+    audioSocket->connectToHost(QHostAddress::LocalHost, static_cast<quint16>(port));
 }
 
 void AudioOutput::stopRecvData()
 {
-    if (!m_workerThread.isRunning()) {
+    if (!m_audioSocket) {
         return;
     }
 
-    m_workerThread.quit();
-    m_workerThread.wait();
+    QTcpSocket *audioSocket = m_audioSocket.data();
+    m_audioSocket = nullptr;
+    audioSocket->disconnect(this);
+    audioSocket->abort();
+    audioSocket->close();
+    audioSocket->deleteLater();
 }

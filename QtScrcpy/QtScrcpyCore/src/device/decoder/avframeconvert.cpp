@@ -4,7 +4,10 @@
 
 AVFrameConvert::AVFrameConvert() {}
 
-AVFrameConvert::~AVFrameConvert() {}
+AVFrameConvert::~AVFrameConvert()
+{
+    deInit();
+}
 
 void AVFrameConvert::setSrcFrameInfo(int srcWidth, int srcHeight, AVPixelFormat srcFormat)
 {

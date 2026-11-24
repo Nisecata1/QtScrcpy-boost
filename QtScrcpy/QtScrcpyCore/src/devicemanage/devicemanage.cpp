@@ -84,11 +84,11 @@ bool DeviceManage::disconnectDevice(const QString &serial)
 
 void DeviceManage::disconnectAllDevice()
 {
-    QMapIterator<QString, QPointer<IDevice>> i(m_devices);
-    while (i.hasNext()) {
-        i.next();
-        if (i.value()) {
-            delete i.value();
+    const QList<QPointer<IDevice>> devices = m_devices.values();
+    m_devices.clear();
+    for (const QPointer<IDevice> &device : devices) {
+        if (device) {
+            delete device;
         }
     }
 }
@@ -131,9 +131,12 @@ quint16 DeviceManage::getFreePort()
 
 void DeviceManage::removeDevice(const QString &serial)
 {
-    if (!serial.isEmpty() && m_devices.contains(serial)) {
-        m_devices[serial]->deleteLater();
-        m_devices.remove(serial);
+    if (serial.isEmpty()) {
+        return;
+    }
+    QPointer<IDevice> device = m_devices.take(serial);
+    if (device) {
+        device->deleteLater();
     }
 }
 

@@ -1,6 +1,7 @@
 #ifndef STREAM_H
 #define STREAM_H
 
+#include <atomic>
 #include <QPointer>
 #include <QSize>
 #include <QThread>
@@ -55,6 +56,7 @@ private:
     AVPacket* m_pending = Q_NULLPTR;
     QElapsedTimer m_bitRateWindowElapsed;
     quint64 m_bitRateWindowBytes = 0;
+    std::atomic_bool m_stopped{false};
 };
 
 #endif // STREAM_H

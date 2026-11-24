@@ -9,7 +9,14 @@ static const AVRational SCRCPY_TIME_BASE = { 1, 1000000 }; // timestamps in us
 
 Recorder::Recorder(const QString &fileName, QObject *parent) : QThread(parent), m_fileName(fileName), m_format(guessRecordFormat(fileName)) {}
 
-Recorder::~Recorder() {}
+Recorder::~Recorder()
+{
+    if (isRunning()) {
+        stopRecorder();
+        wait();
+    }
+    close();
+}
 
 QString Recorder::lastError() const
 {
@@ -39,6 +46,9 @@ AVPacket *Recorder::packetNew(const AVPacket *packet)
 
 void Recorder::packetDelete(AVPacket *packet)
 {
+    if (!packet) {
+        return;
+    }
     av_packet_unref(packet);
     av_packet_free(&packet);
 }
@@ -158,19 +168,21 @@ void Recorder::close()
             setLastError(QStringLiteral("The recorded file is empty: %1").arg(m_fileName));
             m_failed = true;
         }
-        avio_close(m_formatCtx->pb);
+        avio_closep(&m_formatCtx->pb);
         avformat_free_context(m_formatCtx);
         m_formatCtx = Q_NULLPTR;
     }
 
+    AVPacket *previousToDelete = Q_NULLPTR;
     {
         QMutexLocker locker(&m_mutex);
         queueClear();
+        previousToDelete = m_previous;
+        m_previous = Q_NULLPTR;
     }
 
-    if (m_previous) {
-        packetDelete(m_previous);
-        m_previous = Q_NULLPTR;
+    if (previousToDelete) {
+        packetDelete(previousToDelete);
     }
 }
 
@@ -235,8 +247,13 @@ bool Recorder::recorderWriteHeader(const AVPacket *packet)
         return false;
     }
 
+    if (packet->size <= 0 || !packet->data) {
+        setLastError(QStringLiteral("Recorder config packet is empty."));
+        return false;
+    }
+
     AVStream *ostream = m_formatCtx->streams[0];
-    quint8 *extradata = (quint8 *)av_malloc(packet->size * sizeof(quint8));
+    quint8 *extradata = (quint8 *)av_mallocz(static_cast<size_t>(packet->size) + AV_INPUT_BUFFER_PADDING_SIZE);
     if (!extradata) {
         setLastError(QStringLiteral("Cannot allocate extradata."));
         qCritical("Cannot allocate extradata");
@@ -289,10 +306,10 @@ Recorder::RecorderFormat Recorder::guessRecordFormat(const QString &fileName)
     }
     QFileInfo fileInfo = QFileInfo(fileName);
     QString ext = fileInfo.suffix();
-    if (0 == ext.compare("mp4")) {
+    if (0 == ext.compare(QLatin1String("mp4"), Qt::CaseInsensitive)) {
         return Recorder::RECORDER_FORMAT_MP4;
     }
-    if (0 == ext.compare("mkv")) {
+    if (0 == ext.compare(QLatin1String("mkv"), Qt::CaseInsensitive)) {
         return Recorder::RECORDER_FORMAT_MKV;
     }
 
@@ -304,6 +321,7 @@ void Recorder::run()
     qint64 ptsOrigin = AV_NOPTS_VALUE;
     for (;;) {
         AVPacket *rec = Q_NULLPTR;
+        AVPacket *lastToWrite = Q_NULLPTR;
         {
             QMutexLocker locker(&m_mutex);
             while (!m_stopped && m_queue.isEmpty()) {
@@ -313,25 +331,33 @@ void Recorder::run()
             // if stopped is set, continue to process the remaining events (to
             // finish the recording) before actually stopping
             if (m_stopped && m_queue.isEmpty()) {
-                AVPacket *last = m_previous;
-                if (last) {
-                    last->pts -= ptsOrigin;
-                    last->dts = last->pts;
-                    // assign an arbitrary duration to the last packet
-                    last->duration = 100000;
-                    bool ok = write(last);
-                    if (!ok) {
-                        // failing to write the last frame is not very serious, no
-                        // future frame may depend on it, so the resulting file
-                        // will still be valid
-                        qWarning("Could not record last packet");
-                    }
-                    packetDelete(last);
-                }
-                break;
+                lastToWrite = m_previous;
+                m_previous = Q_NULLPTR;
+            } else {
+                rec = m_queue.dequeue();
             }
+        }
 
-            rec = m_queue.dequeue();
+        if (!rec) {
+            if (lastToWrite) {
+                if (lastToWrite->pts != AV_NOPTS_VALUE) {
+                    if (ptsOrigin == AV_NOPTS_VALUE) {
+                        ptsOrigin = lastToWrite->pts;
+                    }
+                    lastToWrite->pts -= ptsOrigin;
+                    lastToWrite->dts = lastToWrite->pts;
+                    // assign an arbitrary duration to the last packet
+                    lastToWrite->duration = 100000;
+                }
+                if (!write(lastToWrite)) {
+                    // failing to write the last frame is not very serious, no
+                    // future frame may depend on it, so the resulting file
+                    // will still be valid
+                    qWarning("Could not record last packet");
+                }
+                packetDelete(lastToWrite);
+            }
+            break;
         }
 
         // recorder->previous is only written from this thread, no need to lock
@@ -346,7 +372,7 @@ void Recorder::run()
         // config packets have no PTS, we must ignore them
         if (rec->pts != AV_NOPTS_VALUE && previous->pts != AV_NOPTS_VALUE) {
             // we now know the duration of the previous packet
-            previous->duration = rec->pts - previous->pts;
+            previous->duration = qMax<qint64>(0, rec->pts - previous->pts);
         }
 
         if (previous->pts != AV_NOPTS_VALUE) {
@@ -399,6 +425,12 @@ bool Recorder::push(const AVPacket *packet)
     }
 
     if (m_stopped) {
+        return false;
+    }
+
+    if (m_queue.size() >= kMaxQueueSize) {
+        m_lastError = QStringLiteral("Recorder queue overflow (disk too slow).");
+        qWarning("Recorder queue overflow (%d packets), stopping recording", m_queue.size());
         return false;
     }
 

@@ -1,14 +1,14 @@
 #ifndef AUDIOOUTPUT_H
 #define AUDIOOUTPUT_H
 
-#include <QThread>
+#include <QByteArray>
 #include <QProcess>
 #include <QPointer>
-#include <QVector>
 
 class QAudioSink;
 class QAudioOutput;
 class QIODevice;
+class QTcpSocket;
 class AudioOutput : public QObject
 {
     Q_OBJECT
@@ -27,14 +27,11 @@ private:
     void startRecvData(int port);
     void stopRecvData();
 
-signals:
-    void connectTo(int port);
-
 private:
     QPointer<QIODevice> m_outputDevice;
-    QThread m_workerThread;
+    QPointer<QTcpSocket> m_audioSocket;
     QProcess m_sndcpy;
-    QVector<char> m_buffer;
+    QByteArray m_buffer;
     bool m_running = false;
 #if (QT_VERSION < QT_VERSION_CHECK(6, 0, 0))
     QAudioOutput* m_audioOutput = nullptr;

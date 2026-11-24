@@ -8,7 +8,7 @@ FileHandler::~FileHandler() {}
 
 void FileHandler::onPushFileRequest(const QString &serial, const QString &file, const QString &devicePath)
 {
-    qsc::AdbProcess* adb = new qsc::AdbProcess;
+    qsc::AdbProcess* adb = new qsc::AdbProcess(this);
     bool isApk = false;
     connect(adb, &qsc::AdbProcess::adbProcessResult, this, [this, adb, isApk](qsc::AdbProcess::ADB_EXEC_RESULT processResult) {
         onAdbProcessResult(adb, isApk, processResult);
@@ -19,7 +19,7 @@ void FileHandler::onPushFileRequest(const QString &serial, const QString &file, 
 
 void FileHandler::onInstallApkRequest(const QString &serial, const QString &apkFile)
 {
-    qsc::AdbProcess* adb = new qsc::AdbProcess;
+    qsc::AdbProcess* adb = new qsc::AdbProcess(this);
     bool isApk = true;
     connect(adb, &qsc::AdbProcess::adbProcessResult, this, [this, adb, isApk](qsc::AdbProcess::ADB_EXEC_RESULT processResult) {
         onAdbProcessResult(adb, isApk, processResult);

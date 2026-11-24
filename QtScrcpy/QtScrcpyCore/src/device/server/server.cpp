@@ -466,13 +466,13 @@ bool Server::enableTunnelReverse()
 
 bool Server::disableTunnelReverse()
 {
-    qsc::AdbProcess *adb = new qsc::AdbProcess();
+    qsc::AdbProcess *adb = new qsc::AdbProcess(this);
     if (!adb) {
         return false;
     }
-    connect(adb, &qsc::AdbProcess::adbProcessResult, this, [this](qsc::AdbProcess::ADB_EXEC_RESULT processResult) {
+    connect(adb, &qsc::AdbProcess::adbProcessResult, this, [adb](qsc::AdbProcess::ADB_EXEC_RESULT processResult) {
         if (qsc::AdbProcess::AER_SUCCESS_START != processResult) {
-            sender()->deleteLater();
+            adb->deleteLater();
         }
     });
     adb->reverseRemove(m_params.serial, QString(SOCKET_NAME_PREFIX "_%1").arg(m_params.scid, 8, 16, QChar('0')));
@@ -489,13 +489,13 @@ bool Server::enableTunnelForward()
 }
 bool Server::disableTunnelForward()
 {
-    qsc::AdbProcess *adb = new qsc::AdbProcess();
+    qsc::AdbProcess *adb = new qsc::AdbProcess(this);
     if (!adb) {
         return false;
     }
-    connect(adb, &qsc::AdbProcess::adbProcessResult, this, [this](qsc::AdbProcess::ADB_EXEC_RESULT processResult) {
+    connect(adb, &qsc::AdbProcess::adbProcessResult, this, [adb](qsc::AdbProcess::ADB_EXEC_RESULT processResult) {
         if (qsc::AdbProcess::AER_SUCCESS_START != processResult) {
-            sender()->deleteLater();
+            adb->deleteLater();
         }
     });
     adb->forwardRemove(m_params.serial, m_params.localPort);
@@ -507,9 +507,6 @@ bool Server::execute()
     if (m_serverProcess.isRuning()) {
         m_serverProcess.kill();
     }
-
-    // 娴?userdata.ini 閺冧浇鐭剧拠璇插絿闂呮劘妫岄惃鍕暩缁旂偛寮弫?
-    loadRuntimeTuningFromUserData();
 
     QStringList args;
     args << "shell";
@@ -585,13 +582,10 @@ bool Server::execute()
         args << QString("video_encoder=%1").arg(m_params.codecName);
     }
     
-    // 3. 鐠囪褰囬崢鐔烘晸闂婃娊顣跺鈧崗鐐解偓鍌氼洤閺嬫粈绗夋繅顐︾帛鐠併倕鍙ч梻?(false)
-    if (!m_audioEnabled) {
-        // 婵″倹鐏夊鈧崗铏梾瀵偓閿涘苯姘ㄥ楦款攽閸氭垶澧滈張铏诡伂閸欐垿鈧?audio=false 閸忔娊妫撮棅鎶筋暥
-        args << "audio=false";
+    if (m_audioEnabled) {
+        qWarning() << "AudioEnable=true is ignored for scrcpy-server 3.3.3 audio socket; forcing audio=false to preserve video/control handshake.";
     }
-    // 濞夘煉绱版俊鍌涚亯 enableAudio 娑?true閿涘苯鍨稉宥呭絺闁浇顕氶崣鍌涙殶閵?
-    // 鎼存洖鐪?scrcpy-server 娴兼岸绮拋銈呯磻閸氼垶鐓舵０鎴炵ウ閿涘苯鐨㈤崗鏈电瑢鐟欏棝顣跺ù浣风鐠ч攱澧﹂崠鍛絺闁胶绮伴悽浣冨壋閵?
+    args << "audio=false";
     
     // 閺堝秴濮熺粩顖炵帛鐠?1閿涘苯褰叉稉宥勭炊
     if (-1 != m_params.scid) {
@@ -706,11 +700,9 @@ QTcpSocket *Server::getControlSocket()
 
 void Server::stop()
 {
-    if (m_tunnelForward) {
-        stopConnectTimeoutTimer();
-    } else {
-        stopAcceptTimeoutTimer();
-    }
+    stopConnectTimeoutTimer();
+    stopAcceptTimeoutTimer();
+    m_serverStartStep = SSS_NULL;
 
     if (m_controlSocket) {
         m_controlSocket->close();
@@ -721,6 +713,9 @@ void Server::stop()
         m_videoSocket->close();
         m_videoSocket->deleteLater();
         m_videoSocket = Q_NULLPTR;
+    }
+    if (m_workProcess.isRuning()) {
+        m_workProcess.kill();
     }
     // ignore failure
     m_serverProcess.kill();
@@ -767,28 +762,47 @@ bool Server::startServerByStep()
 }
 bool Server::readInfo(VideoSocket *videoSocket, QString &deviceName, QSize &size)
 {
+    if (!videoSocket) {
+        return false;
+    }
+
+    constexpr qint64 kInfoHeaderSize = DEVICE_NAME_FIELD_LENGTH + 12;
     QElapsedTimer timer;
     timer.start();
-    unsigned char buf[DEVICE_NAME_FIELD_LENGTH + 12];
-    while (videoSocket->bytesAvailable() <= (DEVICE_NAME_FIELD_LENGTH + 12)) {
-        videoSocket->waitForReadyRead(300);
+    QByteArray raw;
+    raw.reserve(kInfoHeaderSize);
+    while (raw.size() < kInfoHeaderSize) {
+        if (videoSocket->bytesAvailable() > 0) {
+            const QByteArray chunk = videoSocket->read(kInfoHeaderSize - raw.size());
+            if (!chunk.isEmpty()) {
+                raw.append(chunk);
+            }
+            continue;
+        }
+        if (videoSocket->state() != QAbstractSocket::ConnectedState) {
+            qInfo("readInfo aborted: video socket disconnected");
+            return false;
+        }
         if (timer.elapsed() > 3000) {
             qInfo("readInfo timeout");
             return false;
         }
+        videoSocket->waitForReadyRead(300);
     }
     qDebug() << "readInfo wait time:" << timer.elapsed();
 
-    qint64 len = videoSocket->read((char *)buf, sizeof(buf));
-    if (len < DEVICE_NAME_FIELD_LENGTH + 12) {
+    if (raw.size() < kInfoHeaderSize) {
         qInfo("Could not retrieve device information");
         return false;
     }
+    unsigned char buf[DEVICE_NAME_FIELD_LENGTH + 12];
+    memcpy(buf, raw.constData(), static_cast<size_t>(kInfoHeaderSize));
     buf[DEVICE_NAME_FIELD_LENGTH - 1] = '\0'; // in case the client sends garbage
-    deviceName = QString::fromUtf8((const char *)buf);
+    deviceName = QString::fromUtf8(reinterpret_cast<const char *>(buf));
 
-    // 鍓?4 涓瓧鑺傛槸 AVCodecID锛屽綋鍓嶅彧鏀寔 H264锛屾墍浠ュ厛涓嶈В鏋?    size.setWidth(bufferRead32be(&buf[DEVICE_NAME_FIELD_LENGTH + 4]));
-    size.setHeight(bufferRead32be(&buf[DEVICE_NAME_FIELD_LENGTH + 8]));
+    // 前 4 个字节是 AVCodecID（当前仅支持 H.264），后续 8 个字节分别为视频宽与高。
+    size.setWidth(static_cast<int>(bufferRead32be(&buf[DEVICE_NAME_FIELD_LENGTH + 4])));
+    size.setHeight(static_cast<int>(bufferRead32be(&buf[DEVICE_NAME_FIELD_LENGTH + 8])));
 
     return true;
 }

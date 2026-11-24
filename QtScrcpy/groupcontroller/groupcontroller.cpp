@@ -10,7 +10,11 @@ GroupController::GroupController(QObject *parent) : QObject(parent)
 
 bool GroupController::isHost(const QString &serial)
 {
-    auto data = qsc::IDeviceManage::getInstance().getDevice(serial)->getUserData();
+    auto device = qsc::IDeviceManage::getInstance().getDevice(serial);
+    if (!device) {
+        return false;
+    }
+    auto data = device->getUserData();
     if (!data) {
         return true;
     }
@@ -20,7 +24,11 @@ bool GroupController::isHost(const QString &serial)
 
 QSize GroupController::getFrameSize(const QString &serial)
 {
-    auto data = qsc::IDeviceManage::getInstance().getDevice(serial)->getUserData();
+    auto device = qsc::IDeviceManage::getInstance().getDevice(serial);
+    if (!device) {
+        return QSize();
+    }
+    auto data = device->getUserData();
     if (!data) {
         return QSize();
     }
@@ -82,7 +90,8 @@ void GroupController::removeDevice(const QString &serial)
 void GroupController::mouseEvent(const QMouseEvent *from, const QSize &frameSize, const QSize &showSize)
 {
     Q_UNUSED(frameSize);
-    for (const auto& serial : m_devices) {
+    const QVector<QString> devices = m_devices;
+    for (const auto& serial : devices) {
         if (true == isHost(serial)) {
             continue;
         }
@@ -98,7 +107,8 @@ void GroupController::mouseEvent(const QMouseEvent *from, const QSize &frameSize
 void GroupController::wheelEvent(const QWheelEvent *from, const QSize &frameSize, const QSize &showSize)
 {
     Q_UNUSED(frameSize);
-    for (const auto& serial : m_devices) {
+    const QVector<QString> devices = m_devices;
+    for (const auto& serial : devices) {
         if (true == isHost(serial)) {
             continue;
         }
@@ -114,7 +124,8 @@ void GroupController::wheelEvent(const QWheelEvent *from, const QSize &frameSize
 void GroupController::keyEvent(const QKeyEvent *from, const QSize &frameSize, const QSize &showSize)
 {
     Q_UNUSED(frameSize);
-    for (const auto& serial : m_devices) {
+    const QVector<QString> devices = m_devices;
+    for (const auto& serial : devices) {
         if (true == isHost(serial)) {
             continue;
         }
@@ -129,7 +140,8 @@ void GroupController::keyEvent(const QKeyEvent *from, const QSize &frameSize, co
 
 void GroupController::postGoBack()
 {
-    for (const auto& serial : m_devices) {
+    const QVector<QString> devices = m_devices;
+    for (const auto& serial : devices) {
         if (true == isHost(serial)) {
             continue;
         }
@@ -144,7 +156,8 @@ void GroupController::postGoBack()
 
 void GroupController::postGoHome()
 {
-    for (const auto& serial : m_devices) {
+    const QVector<QString> devices = m_devices;
+    for (const auto& serial : devices) {
         if (true == isHost(serial)) {
             continue;
         }
@@ -159,7 +172,8 @@ void GroupController::postGoHome()
 
 void GroupController::postGoMenu()
 {
-    for (const auto& serial : m_devices) {
+    const QVector<QString> devices = m_devices;
+    for (const auto& serial : devices) {
         if (true == isHost(serial)) {
             continue;
         }
@@ -174,7 +188,8 @@ void GroupController::postGoMenu()
 
 void GroupController::postAppSwitch()
 {
-    for (const auto& serial : m_devices) {
+    const QVector<QString> devices = m_devices;
+    for (const auto& serial : devices) {
         if (true == isHost(serial)) {
             continue;
         }
@@ -189,7 +204,8 @@ void GroupController::postAppSwitch()
 
 void GroupController::postPower()
 {
-    for (const auto& serial : m_devices) {
+    const QVector<QString> devices = m_devices;
+    for (const auto& serial : devices) {
         if (true == isHost(serial)) {
             continue;
         }
@@ -204,7 +220,8 @@ void GroupController::postPower()
 
 void GroupController::postVolumeUp()
 {
-    for (const auto& serial : m_devices) {
+    const QVector<QString> devices = m_devices;
+    for (const auto& serial : devices) {
         if (true == isHost(serial)) {
             continue;
         }
@@ -219,7 +236,8 @@ void GroupController::postVolumeUp()
 
 void GroupController::postVolumeDown()
 {
-    for (const auto& serial : m_devices) {
+    const QVector<QString> devices = m_devices;
+    for (const auto& serial : devices) {
         if (true == isHost(serial)) {
             continue;
         }
@@ -234,7 +252,8 @@ void GroupController::postVolumeDown()
 
 void GroupController::postCopy()
 {
-    for (const auto& serial : m_devices) {
+    const QVector<QString> devices = m_devices;
+    for (const auto& serial : devices) {
         if (true == isHost(serial)) {
             continue;
         }
@@ -249,7 +268,8 @@ void GroupController::postCopy()
 
 void GroupController::postCut()
 {
-    for (const auto& serial : m_devices) {
+    const QVector<QString> devices = m_devices;
+    for (const auto& serial : devices) {
         if (true == isHost(serial)) {
             continue;
         }
@@ -264,7 +284,8 @@ void GroupController::postCut()
 
 void GroupController::setDisplayPower(bool on)
 {
-    for (const auto& serial : m_devices) {
+    const QVector<QString> devices = m_devices;
+    for (const auto& serial : devices) {
         if (true == isHost(serial)) {
             continue;
         }
@@ -279,7 +300,8 @@ void GroupController::setDisplayPower(bool on)
 
 void GroupController::expandNotificationPanel()
 {
-    for (const auto& serial : m_devices) {
+    const QVector<QString> devices = m_devices;
+    for (const auto& serial : devices) {
         if (true == isHost(serial)) {
             continue;
         }
@@ -294,7 +316,8 @@ void GroupController::expandNotificationPanel()
 
 void GroupController::collapsePanel()
 {
-    for (const auto& serial : m_devices) {
+    const QVector<QString> devices = m_devices;
+    for (const auto& serial : devices) {
         if (true == isHost(serial)) {
             continue;
         }
@@ -309,7 +332,8 @@ void GroupController::collapsePanel()
 
 void GroupController::postBackOrScreenOn(bool down)
 {
-    for (const auto& serial : m_devices) {
+    const QVector<QString> devices = m_devices;
+    for (const auto& serial : devices) {
         if (true == isHost(serial)) {
             continue;
         }
@@ -324,7 +348,8 @@ void GroupController::postBackOrScreenOn(bool down)
 
 void GroupController::postTextInput(QString &text)
 {
-    for (const auto& serial : m_devices) {
+    const QVector<QString> devices = m_devices;
+    for (const auto& serial : devices) {
         if (true == isHost(serial)) {
             continue;
         }
@@ -339,7 +364,8 @@ void GroupController::postTextInput(QString &text)
 
 void GroupController::setDeviceClipboardText(QString &text, bool paste)
 {
-    for (const auto& serial : m_devices) {
+    const QVector<QString> devices = m_devices;
+    for (const auto& serial : devices) {
         if (true == isHost(serial)) {
             continue;
         }
@@ -354,7 +380,8 @@ void GroupController::setDeviceClipboardText(QString &text, bool paste)
 
 void GroupController::requestDeviceClipboard()
 {
-    for (const auto& serial : m_devices) {
+    const QVector<QString> devices = m_devices;
+    for (const auto& serial : devices) {
         if (true == isHost(serial)) {
             continue;
         }
@@ -369,7 +396,8 @@ void GroupController::requestDeviceClipboard()
 
 void GroupController::setDeviceClipboard(bool pause)
 {
-    for (const auto& serial : m_devices) {
+    const QVector<QString> devices = m_devices;
+    for (const auto& serial : devices) {
         if (true == isHost(serial)) {
             continue;
         }
@@ -384,7 +412,8 @@ void GroupController::setDeviceClipboard(bool pause)
 
 void GroupController::clipboardPaste()
 {
-    for (const auto& serial : m_devices) {
+    const QVector<QString> devices = m_devices;
+    for (const auto& serial : devices) {
         if (true == isHost(serial)) {
             continue;
         }
@@ -399,7 +428,8 @@ void GroupController::clipboardPaste()
 
 void GroupController::pushFileRequest(const QString &file, const QString &devicePath)
 {
-    for (const auto& serial : m_devices) {
+    const QVector<QString> devices = m_devices;
+    for (const auto& serial : devices) {
         if (true == isHost(serial)) {
             continue;
         }
@@ -414,7 +444,8 @@ void GroupController::pushFileRequest(const QString &file, const QString &device
 
 void GroupController::installApkRequest(const QString &apkFile)
 {
-    for (const auto& serial : m_devices) {
+    const QVector<QString> devices = m_devices;
+    for (const auto& serial : devices) {
         if (true == isHost(serial)) {
             continue;
         }
@@ -429,7 +460,8 @@ void GroupController::installApkRequest(const QString &apkFile)
 
 void GroupController::screenshot()
 {
-    for (const auto& serial : m_devices) {
+    const QVector<QString> devices = m_devices;
+    for (const auto& serial : devices) {
         if (true == isHost(serial)) {
             continue;
         }
@@ -444,7 +476,8 @@ void GroupController::screenshot()
 
 void GroupController::showTouch(bool show)
 {
-    for (const auto& serial : m_devices) {
+    const QVector<QString> devices = m_devices;
+    for (const auto& serial : devices) {
         if (true == isHost(serial)) {
             continue;
         }

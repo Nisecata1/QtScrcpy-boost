@@ -105,6 +105,13 @@ Device::Device(DeviceParams params, QObject *parent) : IDevice(parent), m_params
 Device::~Device()
 {
     Device::disconnectDevice();
+    if (m_bitRateIdleTimer) {
+        m_bitRateIdleTimer->stop();
+    }
+    if (m_controller) {
+        delete m_controller;
+        m_controller = Q_NULLPTR;
+    }
 }
 
 void Device::setUserData(void *data)
@@ -213,13 +220,12 @@ bool Device::startRecording(const QString &recordDir, const QString &recordFileF
         return false;
     }
 
-    Recorder *recorder = new Recorder(filePath, this);
+    std::shared_ptr<Recorder> recorder = std::make_shared<Recorder>(filePath);
     recorder->setFrameSize(streamFrameSize);
     if (!recorder->open()) {
         setError(recorder->lastError().isEmpty()
             ? QStringLiteral("Could not open recorder.")
             : recorder->lastError());
-        delete recorder;
         freePacket(cachedConfigPacket);
         return false;
     }
@@ -229,22 +235,31 @@ bool Device::startRecording(const QString &recordDir, const QString &recordFileF
             ? QStringLiteral("Could not start recorder.")
             : recorder->lastError());
         recorder->close();
-        delete recorder;
         freePacket(cachedConfigPacket);
         return false;
+    }
+
+    if (cachedConfigPacket) {
+        const bool pushOk = recorder->push(cachedConfigPacket);
+        freePacket(cachedConfigPacket);
+        if (!pushOk) {
+            setError(recorder->lastError().isEmpty()
+                ? QStringLiteral("Could not send cached video config packet to recorder.")
+                : recorder->lastError());
+            recorder->stopRecorder();
+            recorder->wait();
+            recorder->close();
+            return false;
+        }
     }
 
     {
         QMutexLocker locker(&m_recordingMutex);
         if (m_recordingActive || m_recorder) {
             setError(QStringLiteral("Recording is already in progress."));
-            if (recorder->isRunning()) {
-                recorder->stopRecorder();
-                recorder->wait();
-            }
+            recorder->stopRecorder();
+            recorder->wait();
             recorder->close();
-            delete recorder;
-            freePacket(cachedConfigPacket);
             return false;
         }
 
@@ -254,18 +269,6 @@ bool Device::startRecording(const QString &recordDir, const QString &recordFileF
     }
 
     emit recordingStateChanged(m_params.serial, true, filePath);
-
-    if (cachedConfigPacket) {
-        const bool pushOk = recorder->push(cachedConfigPacket);
-        freePacket(cachedConfigPacket);
-        if (!pushOk) {
-            setError(recorder->lastError().isEmpty()
-                ? QStringLiteral("Could not send cached video config packet to recorder.")
-                : recorder->lastError());
-            stopRecorderInternal(true);
-            return false;
-        }
-    }
 
     return true;
 }
@@ -278,18 +281,17 @@ void Device::stopRecording()
 bool Device::isRecording() const
 {
     QMutexLocker locker(&m_recordingMutex);
-    return m_recordingActive && !m_recorder.isNull();
+    return m_recordingActive && static_cast<bool>(m_recorder);
 }
 
 void Device::stopRecorderInternal(bool emitSignal)
 {
-    Recorder *recorder = Q_NULLPTR;
+    std::shared_ptr<Recorder> recorder;
     bool wasActive = false;
     {
         QMutexLocker locker(&m_recordingMutex);
-        recorder = m_recorder.data();
+        recorder = std::move(m_recorder);
         wasActive = m_recordingActive;
-        m_recorder = Q_NULLPTR;
         m_recordingActive = false;
         m_activeRecordingFilePath.clear();
     }
@@ -305,7 +307,6 @@ void Device::stopRecorderInternal(bool emitSignal)
                 recorder->wait();
             }
             recorder->close();
-            delete recorder;
         }
 
         if (emitSignal && wasActive) {
@@ -323,14 +324,16 @@ void Device::stopRecorderInternal(bool emitSignal)
 void Device::failRecorder(const QString &message)
 {
     QString errorMessage = message.trimmed();
+    std::shared_ptr<Recorder> recorder;
     {
         QMutexLocker locker(&m_recordingMutex);
         if (!m_recorder && !m_recordingActive) {
             return;
         }
-        if (errorMessage.isEmpty() && m_recorder) {
-            errorMessage = m_recorder->lastError();
-        }
+        recorder = m_recorder;
+    }
+    if (errorMessage.isEmpty() && recorder) {
+        errorMessage = recorder->lastError();
     }
 
     if (errorMessage.isEmpty()) {
@@ -390,13 +393,13 @@ void Device::screenshot()
 
 void Device::showTouch(bool show)
 {
-    AdbProcess *adb = new qsc::AdbProcess();
+    AdbProcess *adb = new qsc::AdbProcess(this);
     if (!adb) {
         return;
     }
-    connect(adb, &qsc::AdbProcess::adbProcessResult, this, [this](qsc::AdbProcess::ADB_EXEC_RESULT processResult) {
+    connect(adb, &qsc::AdbProcess::adbProcessResult, this, [adb](qsc::AdbProcess::ADB_EXEC_RESULT processResult) {
         if (AdbProcess::AER_SUCCESS_START != processResult) {
-            sender()->deleteLater();
+            adb->deleteLater();
         }
     });
     adb->setShowTouchesEnabled(getSerial(), show);
@@ -552,10 +555,10 @@ void Device::initSignals()
                 qCritical("Could not send packet to decoder");
             }
 
-            Recorder *recorder = Q_NULLPTR;
+            std::shared_ptr<Recorder> recorder;
             {
                 QMutexLocker locker(&m_recordingMutex);
-                recorder = m_recorder.data();
+                recorder = m_recorder;
             }
             if (recorder && !recorder->push(packet)) {
                 failRecorder(recorder->lastError().isEmpty()
@@ -566,10 +569,10 @@ void Device::initSignals()
         connect(m_stream, &Demuxer::getConfigFrame, this, [this](AVPacket *packet) {
             cacheRecorderConfigPacket(packet);
 
-            Recorder *recorder = Q_NULLPTR;
+            std::shared_ptr<Recorder> recorder;
             {
                 QMutexLocker locker(&m_recordingMutex);
-                recorder = m_recorder.data();
+                recorder = m_recorder;
             }
             if (recorder && !recorder->push(packet)) {
                 failRecorder(recorder->lastError().isEmpty()

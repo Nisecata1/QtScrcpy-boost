@@ -1,5 +1,6 @@
 #ifndef FPSCOUNTER_H
 #define FPSCOUNTER_H
+#include <atomic>
 #include <QObject>
 
 class FpsCounter : public QObject
@@ -27,12 +28,12 @@ private:
     void resetCounter();
 
 private:
-    qint32 m_counterTimer = 0;
+    std::atomic<qint32> m_counterTimer{0};
     quint32 m_curRendered = 0;
     quint32 m_curSkipped = 0;
 
-    quint32 m_rendered = 0;
-    quint32 m_skipped = 0;
+    std::atomic<quint32> m_rendered{0};
+    std::atomic<quint32> m_skipped{0};
 };
 
 #endif // FPSCOUNTER_H

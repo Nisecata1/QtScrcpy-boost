@@ -1,6 +1,7 @@
 ﻿#ifndef DEVICE_H
 #define DEVICE_H
 
+#include <memory>
 #include <set>
 #include <QElapsedTimer>
 #include <QMutex>
@@ -97,7 +98,7 @@ private:
     QPointer<Controller> m_controller;
     QPointer<FileHandler> m_fileHandler;
     QPointer<Demuxer> m_stream;
-    QPointer<Recorder> m_recorder;
+    std::shared_ptr<Recorder> m_recorder;
     mutable QMutex m_recordingMutex;
     QSize m_streamFrameSize;
     AVPacket *m_lastRecorderConfigPacket = Q_NULLPTR;

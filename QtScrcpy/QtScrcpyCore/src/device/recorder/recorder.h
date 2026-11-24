@@ -69,6 +69,7 @@ private:
     // "previous" is only accessed from the recorder thread, so it does not
     // need to be protected by the mutex
     AVPacket *m_previous = Q_NULLPTR;
+    static constexpr int kMaxQueueSize = 512;
 };
 
 #endif // RECORDER_H

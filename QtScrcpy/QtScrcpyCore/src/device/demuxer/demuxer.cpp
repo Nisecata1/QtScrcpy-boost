@@ -1,3 +1,6 @@
+#include <cstdarg>
+#include <cstdio>
+
 #include <QDebug>
 #include <QTime>
 
@@ -23,26 +26,31 @@ Demuxer::~Demuxer() {}
 static void avLogCallback(void *avcl, int level, const char *fmt, va_list vl)
 {
     Q_UNUSED(avcl)
-    Q_UNUSED(vl)
+    if (!fmt) {
+        return;
+    }
 
-    QString localFmt = QString::fromUtf8(fmt);
-    localFmt.prepend("[FFmpeg] ");
+    char buf[1024] = { 0 };
+    va_list argsCopy;
+    va_copy(argsCopy, vl);
+    vsnprintf(buf, sizeof(buf) - 1, fmt, argsCopy);
+    va_end(argsCopy);
+
+    const QString msg = QStringLiteral("[FFmpeg] %1").arg(QString::fromUtf8(buf).trimmed());
     switch (level) {
     case AV_LOG_PANIC:
     case AV_LOG_FATAL:
-        qFatal("%s", localFmt.toUtf8().data());
-        break;
     case AV_LOG_ERROR:
-        qCritical() << localFmt.toUtf8();
+        qCritical().noquote() << msg;
         break;
     case AV_LOG_WARNING:
-        qWarning() << localFmt.toUtf8();
+        qWarning().noquote() << msg;
         break;
     case AV_LOG_INFO:
-        qInfo() << localFmt.toUtf8();
+        qInfo().noquote() << msg;
         break;
     case AV_LOG_DEBUG:
-        // qDebug() << localFmt.toUtf8();
+        // qDebug().noquote() << msg;
         break;
     }
 
@@ -105,12 +113,18 @@ bool Demuxer::startDecode()
     if (!m_videoSocket) {
         return false;
     }
+    m_stopped.store(false, std::memory_order_release);
+    m_videoSocket->resetStop();
     start();
     return true;
 }
 
 void Demuxer::stopDecode()
 {
+    m_stopped.store(true, std::memory_order_release);
+    if (m_videoSocket) {
+        m_videoSocket->requestStop();
+    }
     wait();
 }
 
@@ -156,7 +170,7 @@ void Demuxer::run()
         goto runQuit;
     }
 
-    for (;;) {
+    while (!m_stopped.load(std::memory_order_acquire)) {
         bool ok = recvPacket(packet);
         if (!ok) {
             // end of stream
@@ -173,15 +187,20 @@ void Demuxer::run()
 
     qDebug("End of frames");
 
+runQuit:
     if (m_pending) {
         av_packet_free(&m_pending);
     }
 
-    av_packet_free(&packet);
+    if (packet) {
+        av_packet_free(&packet);
+    }
 
-    av_parser_close(m_parser);
+    if (m_parser) {
+        av_parser_close(m_parser);
+        m_parser = Q_NULLPTR;
+    }
 
-runQuit:
     emit updateBitRate(0);
 
     if (m_codecCtx) {
@@ -228,7 +247,11 @@ bool Demuxer::recvPacket(AVPacket *packet)
 
     quint64 ptsFlags = bufferRead64be(header);
     quint32 len = bufferRead32be(&header[8]);
-    Q_ASSERT(len);
+    constexpr quint32 kMaxVideoPacketSize = 64u * 1024u * 1024u;
+    if (len == 0 || len > kMaxVideoPacketSize) {
+        qCritical("Invalid video packet size: %u", len);
+        return false;
+    }
 
     if (av_new_packet(packet, static_cast<int>(len))) {
         qCritical("Could not allocate packet");
@@ -272,6 +295,10 @@ bool Demuxer::pushPacket(AVPacket *packet)
         } else {
             offset = 0;
             m_pending = av_packet_alloc();
+            if (!m_pending) {
+                qCritical("Could not allocate pending packet");
+                return false;
+            }
             if (av_new_packet(m_pending, packet->size)) {
                 av_packet_free(&m_pending);
                 qCritical("Could not create packet");
@@ -327,9 +354,10 @@ bool Demuxer::parse(AVPacket *packet)
     int r = av_parser_parse2(m_parser, m_codecCtx, &outData, &outLen, inData, inLen, AV_NOPTS_VALUE, AV_NOPTS_VALUE, -1);
 
     // PARSER_FLAG_COMPLETE_FRAMES is set
-    Q_ASSERT(r == inLen);
-    (void)r;
-    Q_ASSERT(outLen == inLen);
+    if (r < 0 || r != inLen || outLen != inLen) {
+        qCritical("Could not parse complete video frame: r=%d outLen=%d inLen=%d", r, outLen, inLen);
+        return false;
+    }
 
     if (m_parser->key_frame == 1) {
         packet->flags |= AV_PKT_FLAG_KEY;

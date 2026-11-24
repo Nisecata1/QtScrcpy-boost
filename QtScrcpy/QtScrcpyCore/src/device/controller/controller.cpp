@@ -193,6 +193,7 @@ void Controller::requestDeviceClipboard()
     if (!controlMsg) {
         return;
     }
+    controlMsg->setGetClipboardMsgData(ControlMsg::GCCK_NONE);
     postControlMsg(controlMsg);
 }
 

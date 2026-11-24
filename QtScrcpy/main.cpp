@@ -1,5 +1,9 @@
-﻿#include <QApplication>
+﻿#include <atomic>
+
+#include <QApplication>
 #include <QDebug>
+#include <QMetaObject>
+#include <QPointer>
 #include <QFile>
 #include <QFileInfo>
 #ifdef Q_OS_LINUX
@@ -17,7 +21,8 @@
 #include "singleinstance.h"
 #include "mousetap/mousetap.h"
 
-static Dialog *g_mainDlg = Q_NULLPTR;
+static QPointer<Dialog> g_mainDlg;
+static std::atomic_bool g_logUiReady{false};
 static QtMessageHandler g_oldMessageHandler = Q_NULLPTR;
 void myMessageOutput(QtMsgType type, const QMessageLogContext &context, const QString &msg);
 void installTranslator();
@@ -140,6 +145,7 @@ int main(int argc, char *argv[])
 
     g_mainDlg = new Dialog {};
     g_mainDlg->show();
+    g_logUiReady.store(true, std::memory_order_release);
     QObject::connect(&singleInstance, &SingleInstance::activateRequested, g_mainDlg, &Dialog::bringToFront);
     QObject::connect(g_mainDlg, &Dialog::aboutToRestart, &singleInstance, &SingleInstance::release);
 
@@ -155,7 +161,11 @@ int main(int argc, char *argv[])
     }
 
     int ret = a.exec();
-    delete g_mainDlg;
+    g_logUiReady.store(false, std::memory_order_release);
+    qInstallMessageHandler(g_oldMessageHandler);
+    if (g_mainDlg) {
+        delete g_mainDlg;
+    }
 
 #if defined(Q_OS_WIN32) || defined(Q_OS_OSX)
     MouseTap::getInstance()->quitMouseEventTap();
@@ -283,10 +293,15 @@ void myMessageOutput(QtMsgType type, const QMessageLogContext &context, const QS
         fLogLevel2 = QtDebugMsg + 0.5f;
     }
 
-    if (fLogLevel <= fLogLevel2) {
-        if (g_mainDlg && g_mainDlg->isVisible() && !g_mainDlg->filterLog(outputMsg)) {
-            g_mainDlg->outLog(outputMsg);
-        }
+    if (fLogLevel <= fLogLevel2 && g_logUiReady.load(std::memory_order_acquire) && QCoreApplication::instance()) {
+        QMetaObject::invokeMethod(QCoreApplication::instance(), [outputMsg]() {
+            if (!g_logUiReady.load(std::memory_order_acquire) || !g_mainDlg) {
+                return;
+            }
+            if (g_mainDlg->isVisible() && !g_mainDlg->filterLog(outputMsg)) {
+                g_mainDlg->outLog(outputMsg);
+            }
+        }, Qt::QueuedConnection);
     }
 
     if (QtFatalMsg == type) {

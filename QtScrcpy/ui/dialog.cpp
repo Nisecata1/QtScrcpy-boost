@@ -275,6 +275,7 @@ void Dialog::initUI()
     ui->lockOrientationBox->addItem("180");
     ui->lockOrientationBox->addItem("270");
     ui->lockOrientationBox->setCurrentIndex(0);
+    ui->outEdit->document()->setMaximumBlockCount(2000);
 
     // 加载IP历史记录
     loadIpHistory();
@@ -1370,9 +1371,13 @@ void Dialog::onDeviceConnected(bool success, const QString &serial, const QStrin
     videoForm->setLocalTextInputConfig(ui->localTextInputCheck->isChecked(), ui->localTextInputShortcutEdit->keySequence());
     videoForm->setKeymapEditorShortcut(currentKeymapEditorShortcut());
     videoForm->setGameMouseLockShortcut(currentGameMouseLockShortcut());
+    const bool showVideoForm = !ui->notDisplayCheck->isChecked();
+    QPointer<VideoForm> formPtr(videoForm);
     connect(videoForm, &VideoForm::restartServiceRequested, this, &Dialog::onRestartDeviceRequested);
-    connect(videoForm, &QObject::destroyed, this, [this, serial]() {
-        m_videoForms.remove(serial);
+    connect(videoForm, &QObject::destroyed, this, [this, serial, rawForm = videoForm]() {
+        if (m_videoForms.value(serial).data() == rawForm) {
+            m_videoForms.remove(serial);
+        }
     });
     m_videoForms.insert(serial, videoForm);
     updateVideoFormScriptBinding(serial, getGameScriptPath(ui->gameBox->currentText()), ui->gameBox->currentText(), getGameScript(ui->gameBox->currentText()));
@@ -1412,8 +1417,10 @@ void Dialog::onDeviceConnected(bool success, const QString &serial, const QStrin
     }
 
 #ifndef Q_OS_WIN32
-    // must be show before updateShowSize
-    videoForm->show();
+    if (showVideoForm) {
+        // must be show before updateShowSize
+        videoForm->show();
+    }
 #endif
     QString name = Config::getInstance().getNickName(serial);
     if (name.isEmpty()) {
@@ -1433,8 +1440,14 @@ void Dialog::onDeviceConnected(bool success, const QString &serial, const QStrin
     }
 
 #ifdef Q_OS_WIN32
-    // windows是show太早可以看到resize的过程
-    QTimer::singleShot(200, videoForm, [videoForm](){videoForm->show();});
+    if (showVideoForm) {
+        // windows是show太早可以看到resize的过程
+        QTimer::singleShot(200, videoForm, [formPtr]() {
+            if (!formPtr.isNull()) {
+                formPtr->show();
+            }
+        });
+    }
 #endif
 
     GroupController::instance().addDevice(serial);
@@ -1479,7 +1492,8 @@ void Dialog::onDeviceDisconnected(QString serial)
     auto data = device->getUserData();
     if (data) {
         VideoForm* vf = static_cast<VideoForm*>(data);
-        qsc::IDeviceManage::getInstance().getDevice(serial)->deRegisterDeviceObserver(vf);
+        device->setUserData(nullptr);
+        device->deRegisterDeviceObserver(vf);
         vf->close();
         vf->deleteLater();
     }
