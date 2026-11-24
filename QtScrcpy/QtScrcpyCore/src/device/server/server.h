@@ -9,9 +9,12 @@
 #include "tcpserver.h"
 #include "videosocket.h"
 
+class CompatibilityTests;
+
 class Server : public QObject
 {
     Q_OBJECT
+    friend class CompatibilityTests;
 
     enum SERVER_START_STEP
     {
