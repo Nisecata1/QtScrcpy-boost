@@ -319,6 +319,10 @@ target_include_directories(${PROJECT_NAME} PRIVATE QtScrcpyCore/src/device/andro
 # output dir
 # https://cmake.org/cmake/help/latest/prop_gbl/GENERATOR_IS_MULTI_CONFIG.html
 set(QSC_OUTPUT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../output/${QC_CPU_ARCH}")
+set(QSC_OUTPUT_SUFFIX "" CACHE STRING "Suffix appended to configuration output directories")
+if(NOT QSC_OUTPUT_SUFFIX MATCHES "^[A-Za-z0-9_-]*$")
+    message(FATAL_ERROR "QSC_OUTPUT_SUFFIX may only contain letters, digits, underscores and hyphens")
+endif()
 
 # $<0:> 使用生成器表达式为每个config设置RUNTIME_OUTPUT_DIRECTORY，这样multi config就不会自动追加CMAKE_BUILD_TYPE子目录了
 # 1. multi config介绍 https://cmake.org/cmake/help/latest/prop_gbl/GENERATOR_IS_MULTI_CONFIG.html
@@ -328,26 +332,26 @@ if(QC_IS_MULTI_CONFIG)
     foreach(config Debug Release MinSizeRel RelWithDebInfo)
         string(TOUPPER "${config}" config_upper)
         set_target_properties(${PROJECT_NAME} PROPERTIES
-            "RUNTIME_OUTPUT_DIRECTORY_${config_upper}" "${QSC_OUTPUT_ROOT}/${config}"
+            "RUNTIME_OUTPUT_DIRECTORY_${config_upper}" "${QSC_OUTPUT_ROOT}/${config}${QSC_OUTPUT_SUFFIX}"
         )
     endforeach()
 else()
     set_target_properties(${PROJECT_NAME} PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${QSC_OUTPUT_ROOT}/${CMAKE_BUILD_TYPE}"
+        RUNTIME_OUTPUT_DIRECTORY "${QSC_OUTPUT_ROOT}/${CMAKE_BUILD_TYPE}${QSC_OUTPUT_SUFFIX}"
     )
 endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     if(QC_IS_MULTI_CONFIG)
-        set(QSC_DEPLOY_PATH "${QSC_OUTPUT_ROOT}/$<CONFIG>/${PROJECT_NAME}.app/Contents/MacOS")
+        set(QSC_DEPLOY_PATH "${QSC_OUTPUT_ROOT}/$<CONFIG>${QSC_OUTPUT_SUFFIX}/${PROJECT_NAME}.app/Contents/MacOS")
     else()
-        set(QSC_DEPLOY_PATH "${QSC_OUTPUT_ROOT}/${CMAKE_BUILD_TYPE}/${PROJECT_NAME}.app/Contents/MacOS")
+        set(QSC_DEPLOY_PATH "${QSC_OUTPUT_ROOT}/${CMAKE_BUILD_TYPE}${QSC_OUTPUT_SUFFIX}/${PROJECT_NAME}.app/Contents/MacOS")
     endif()
 else()
     if(QC_IS_MULTI_CONFIG)
-        set(QSC_DEPLOY_PATH "${QSC_OUTPUT_ROOT}/$<CONFIG>")
+        set(QSC_DEPLOY_PATH "${QSC_OUTPUT_ROOT}/$<CONFIG>${QSC_OUTPUT_SUFFIX}")
     else()
-        set(QSC_DEPLOY_PATH "${QSC_OUTPUT_ROOT}/${CMAKE_BUILD_TYPE}")
+        set(QSC_DEPLOY_PATH "${QSC_OUTPUT_ROOT}/${CMAKE_BUILD_TYPE}${QSC_OUTPUT_SUFFIX}")
     endif()
 endif()
 

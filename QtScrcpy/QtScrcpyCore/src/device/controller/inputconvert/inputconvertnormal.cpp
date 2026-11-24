@@ -100,6 +100,11 @@ void InputConvertNormal::mouseEvent(const QMouseEvent *from, const QSize &frameS
     // action
     AndroidMotioneventAction action;
     switch (from->type()) {
+    case QEvent::MouseButtonDblClick:
+        if (from->button() != Qt::LeftButton) {
+            return;
+        }
+        Q_FALLTHROUGH();
     case QEvent::MouseButtonPress:
         action = AMOTION_EVENT_ACTION_DOWN;
         beginNormalTapTracking(from);

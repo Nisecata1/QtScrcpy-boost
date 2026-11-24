@@ -40,7 +40,7 @@ const QString &AdbProcessImpl::getAdbPath()
         for (const QString &path : potentialPaths) {
             QFileInfo fileInfo(path);
             if (!path.isEmpty() && fileInfo.isFile()) {
-                s_adbPath = path;
+                s_adbPath = fileInfo.absoluteFilePath();
                 break;
             }
         }
@@ -49,7 +49,7 @@ const QString &AdbProcessImpl::getAdbPath()
             // 如果所有路径都不满足条件，可以选择抛出异常或设置默认值
             qWarning() << "ADB路径未找到";
         } else {
-            qInfo("adb path: %s", QDir(s_adbPath).absolutePath().toUtf8().data());
+            qInfo("adb path: %s", s_adbPath.toUtf8().constData());
         }
     }
     return s_adbPath;

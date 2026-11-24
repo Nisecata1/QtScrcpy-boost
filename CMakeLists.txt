@@ -2,3 +2,9 @@
 project(all)
 
 add_subdirectory(QtScrcpy)
+
+option(QSC_BUILD_TESTS "Build compatibility regression tests" OFF)
+if(QSC_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()

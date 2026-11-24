@@ -207,9 +207,9 @@ int Server::resolveCurrentSurfaceOrientationByDumpsys(const QString &serial, boo
         *ok = false;
     }
 
-    QString adbPath = QString::fromLocal8Bit(qgetenv("QTSCRCPY_ADB_PATH"));
-    if (adbPath.trimmed().isEmpty()) {
-        adbPath = "adb";
+    const QString adbPath = qsc::AdbProcess::getAdbPath();
+    if (adbPath.isEmpty()) {
+        return 0;
     }
 
     const QList<QStringList> probeCommands = {
@@ -243,9 +243,9 @@ QSize Server::resolveScreenSizeByWm(const QString &serial, const QSize &fallback
     if (fromWm) {
         *fromWm = false;
     }
-    QString adbPath = QString::fromLocal8Bit(qgetenv("QTSCRCPY_ADB_PATH"));
-    if (adbPath.trimmed().isEmpty()) {
-        adbPath = "adb";
+    const QString adbPath = qsc::AdbProcess::getAdbPath();
+    if (adbPath.isEmpty()) {
+        return fallbackSize;
     }
     QStringList args;
     if (!serial.trimmed().isEmpty()) {

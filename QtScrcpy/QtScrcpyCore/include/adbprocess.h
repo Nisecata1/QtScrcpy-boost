@@ -24,6 +24,7 @@ public:
     virtual ~AdbProcess();
 
     static void setAdbPath(const QString& adbPath);
+    static QString getAdbPath();
 
     void execute(const QString &serial, const QStringList &args);
     void forward(const QString &serial, quint16 localPort, const QString &deviceSocketName);

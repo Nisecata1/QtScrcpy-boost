@@ -152,12 +152,12 @@ if(QC_IS_MULTI_CONFIG)
     foreach(config Debug Release MinSizeRel RelWithDebInfo)
         string(TOUPPER "${config}" config_upper)
         set_target_properties(${QSC_PROJECT_NAME} PROPERTIES
-            "ARCHIVE_OUTPUT_DIRECTORY_${config_upper}" "${QSC_OUTPUT_ROOT}/${config}"
+            "ARCHIVE_OUTPUT_DIRECTORY_${config_upper}" "${QSC_OUTPUT_ROOT}/${config}${QSC_OUTPUT_SUFFIX}"
         )
     endforeach()
 else()
     set_target_properties(${QSC_PROJECT_NAME} PROPERTIES
-        ARCHIVE_OUTPUT_DIRECTORY "${QSC_OUTPUT_ROOT}/${CMAKE_BUILD_TYPE}"
+        ARCHIVE_OUTPUT_DIRECTORY "${QSC_OUTPUT_ROOT}/${CMAKE_BUILD_TYPE}${QSC_OUTPUT_SUFFIX}"
     )
 endif()
 

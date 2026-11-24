@@ -32,6 +32,7 @@
 #endif
 
 #include "config.h"
+#include "adbprocess.h"
 #include "iconhelper.h"
 #include "keymapeditor/keymapeditordocument.h"
 #include "keymapeditor/keymapeditoroverlay.h"
@@ -1831,9 +1832,10 @@ void VideoForm::startNextOrientationProbeStep()
         return;
     }
 
-    QString adbPath = QString::fromLocal8Bit(qgetenv("QTSCRCPY_ADB_PATH"));
-    if (adbPath.trimmed().isEmpty()) {
-        adbPath = "adb";
+    const QString adbPath = qsc::AdbProcess::getAdbPath();
+    if (adbPath.isEmpty()) {
+        resetOrientationProbeTask();
+        return;
     }
 
     const QString serial = m_serial.trimmed();

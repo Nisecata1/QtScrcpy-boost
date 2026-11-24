@@ -31,6 +31,11 @@ void AdbProcess::setAdbPath(const QString &adbPath)
     g_adbPath = adbPath;
 }
 
+QString AdbProcess::getAdbPath()
+{
+    return AdbProcessImpl::getAdbPath();
+}
+
 void AdbProcess::execute(const QString &serial, const QStringList &args)
 {
     m_adbImpl->execute(serial, args);
