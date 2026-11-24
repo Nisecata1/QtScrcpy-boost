@@ -1178,8 +1178,22 @@ void Dialog::slotActivated(QSystemTrayIcon::ActivationReason reason)
     }
 }
 
+void Dialog::bringToFront()
+{
+    show();
+    setWindowState((windowState() & ~Qt::WindowMinimized) | Qt::WindowActive);
+    raise();
+    activateWindow();
+}
+
 void Dialog::closeEvent(QCloseEvent *event)
 {
+    if (Config::getInstance().getUserBootConfig().quitOnClose) {
+        event->ignore();
+        quitApplicationDirectly();
+        return;
+    }
+
     this->hide();
     if (!Config::getInstance().getTrayMessageShown()) {
         Config::getInstance().setTrayMessageShown(true);
@@ -1980,6 +1994,8 @@ void Dialog::restartApplication()
     const QString program = QCoreApplication::applicationFilePath();
     const QStringList args = QCoreApplication::arguments().mid(1);
     const QString workdir = QCoreApplication::applicationDirPath();
+
+    emit aboutToRestart();
 
     if (QProcess::startDetached(program, args, workdir)) {
         outLog(QString("restart application: %1").arg(program));

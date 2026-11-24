@@ -14,6 +14,7 @@
 #include "config.h"
 #include "dialog.h"
 #include "thememanager.h"
+#include "singleinstance.h"
 #include "mousetap/mousetap.h"
 
 static Dialog *g_mainDlg = Q_NULLPTR;
@@ -101,6 +102,12 @@ int main(int argc, char *argv[])
     g_oldMessageHandler = qInstallMessageHandler(myMessageOutput);
     QApplication a(argc, argv);
 
+    SingleInstance singleInstance(QStringLiteral("QtScrcpy"));
+    if (!singleInstance.isPrimary()) {
+        singleInstance.notifyPrimary();
+        return 0;
+    }
+
     // Set application icon for Linux (taskbar icon)
 #ifdef Q_OS_LINUX
     // Load icon from Qt resource (logo.png is included in res.qrc)
@@ -133,6 +140,8 @@ int main(int argc, char *argv[])
 
     g_mainDlg = new Dialog {};
     g_mainDlg->show();
+    QObject::connect(&singleInstance, &SingleInstance::activateRequested, g_mainDlg, &Dialog::bringToFront);
+    QObject::connect(g_mainDlg, &Dialog::aboutToRestart, &singleInstance, &SingleInstance::release);
 
     QString startupConsoleText = Config::getInstance().getStartupConsoleText();
     startupConsoleText.replace("\r\n", "\n");

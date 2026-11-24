@@ -98,7 +98,10 @@ if (NOT MSVC)
     add_compile_options(-Wall -Wextra -pedantic -Werror)
 
     # disable some warning
-    add_compile_options(-Wno-nested-anon-types -Wno-c++17-extensions -Wno-overloaded-virtual)
+    add_compile_options(-Wno-c++17-extensions -Wno-overloaded-virtual)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        add_compile_options(-Wno-nested-anon-types)
+    endif()
 endif()
 
 #
@@ -217,6 +220,8 @@ set(QC_UTIL_SOURCES
     util/config.cpp
     util/thememanager.h
     util/thememanager.cpp
+    util/singleinstance.h
+    util/singleinstance.cpp
     util/mousetap/mousetap.h
     util/mousetap/mousetap.cpp
 )

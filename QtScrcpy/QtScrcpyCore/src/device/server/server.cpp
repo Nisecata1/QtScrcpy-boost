@@ -579,10 +579,10 @@ bool Server::execute()
     // https://github.com/Genymobile/scrcpy/commit/080a4ee3654a9b7e96c8ffe37474b5c21c02852a
     // <https://d.android.com/reference/android/media/MediaFormat>
     if (!m_params.codecOptions.isEmpty()) {
-        args << QString("codec_options=%1").arg(m_params.codecOptions);
+        args << QString("video_codec_options=%1").arg(m_params.codecOptions);
     }
     if (!m_params.codecName.isEmpty()) {
-        args << QString("encoder_name=%1").arg(m_params.codecName);
+        args << QString("video_encoder=%1").arg(m_params.codecName);
     }
     
     // 3. 鐠囪褰囬崢鐔烘晸闂婃娊顣跺鈧崗鐐解偓鍌氼洤閺嬫粈绗夋繅顐︾帛鐠併倕鍙ч梻?(false)

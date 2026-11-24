@@ -43,6 +43,10 @@ public:
     void outLog(const QString &log, bool newLine = true);
     bool filterLog(const QString &log);
     void getIPbyIp();
+    void bringToFront();
+
+signals:
+    void aboutToRestart();
 
 private slots:
     void onDeviceConnected(bool success, const QString& serial, const QString& deviceName, const QSize& size, int initialOrientation = -1);

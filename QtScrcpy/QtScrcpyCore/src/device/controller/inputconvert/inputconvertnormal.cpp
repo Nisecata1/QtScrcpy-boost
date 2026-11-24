@@ -111,7 +111,7 @@ void InputConvertNormal::mouseEvent(const QMouseEvent *from, const QSize &frameS
         break;
     case QEvent::MouseButtonRelease:
         action = AMOTION_EVENT_ACTION_UP;
-        if (maybeDelayNormalTapRelease(from, frameSize, showSize)) {
+        if (!m_vfingerDown && maybeDelayNormalTapRelease(from, frameSize, showSize)) {
             return;
         }
         m_leftTapCandidate = false;
@@ -146,6 +146,64 @@ void InputConvertNormal::mouseEvent(const QMouseEvent *from, const QSize &frameS
                                      useNormalMouseTouchPriority() ? kTouchControlPriority : Qt::NormalEventPriority);
     if (sent && action == AMOTION_EVENT_ACTION_UP && m_remoteCursorEnabled) {
         sendCursorPositionFromMouseEvent(from, frameSize, showSize);
+    }
+
+    // Pinch-to-zoom / tilt simulation (ported from upstream scrcpy/QtScrcpyCore):
+    // Ctrl: both axes inverted; Shift: x inverted only; Ctrl+Shift: y inverted only.
+    const bool ctrl = from->modifiers().testFlag(Qt::ControlModifier);
+    const bool shift = from->modifiers().testFlag(Qt::ShiftModifier);
+
+    const bool startPinch = AMOTION_EVENT_ACTION_DOWN == action
+        && from->button() == Qt::LeftButton
+        && !m_vfingerDown && (ctrl || shift);
+    const bool endPinch = AMOTION_EVENT_ACTION_UP == action
+        && from->button() == Qt::LeftButton && m_vfingerDown;
+
+    if (startPinch) {
+        m_vfingerInvertX = ctrl != shift;
+        m_vfingerInvertY = ctrl;
+        m_vfingerDown = true;
+    }
+
+    if (m_vfingerDown && (startPinch || endPinch || AMOTION_EVENT_ACTION_MOVE == action)) {
+        QPoint vpos = touchPos;
+        if (m_vfingerInvertX) {
+            vpos.setX(qBound(0, frameSize.width() - vpos.x(), frameSize.width() - 1));
+        }
+        if (m_vfingerInvertY) {
+            vpos.setY(qBound(0, frameSize.height() - vpos.y(), frameSize.height() - 1));
+        }
+        const AndroidMotioneventAction vaction = endPinch ? AMOTION_EVENT_ACTION_UP : action;
+        sendVirtualFingerEvent(vaction, vpos, frameSize);
+        if (endPinch) {
+            m_vfingerDown = false;
+            m_vfingerLastPos = QPoint(kRemoteCursorHideCoord, kRemoteCursorHideCoord);
+            m_vfingerLastFrameSize = QSize();
+        } else {
+            m_vfingerLastPos = vpos;
+            m_vfingerLastFrameSize = frameSize;
+        }
+    }
+}
+
+void InputConvertNormal::sendVirtualFingerEvent(AndroidMotioneventAction action, const QPoint &pos, const QSize &frameSize,
+                                                bool immediate)
+{
+    ControlMsg *controlMsg = new ControlMsg(ControlMsg::CMT_INJECT_TOUCH);
+    if (!controlMsg) {
+        return;
+    }
+    controlMsg->setInjectTouchMsgData(
+        static_cast<quint64>(POINTER_ID_VIRTUAL_FINGER),
+        action,
+        static_cast<AndroidMotioneventButtons>(0),
+        static_cast<AndroidMotioneventButtons>(0),
+        QRect(pos, frameSize),
+        AMOTION_EVENT_ACTION_UP == action ? 0.0f : 1.0f);
+    if (immediate) {
+        sendControlMsgImmediately(controlMsg);
+    } else {
+        sendControlMsg(controlMsg, useNormalMouseTouchPriority() ? kTouchControlPriority : Qt::NormalEventPriority);
     }
 }
 
@@ -236,6 +294,14 @@ void InputConvertNormal::resetInputState()
                        m_activeNormalTouchPointerId,
                        true);
     }
+    if (m_vfingerDown && !m_vfingerLastFrameSize.isEmpty()) {
+        sendVirtualFingerEvent(AMOTION_EVENT_ACTION_UP, m_vfingerLastPos, m_vfingerLastFrameSize, true);
+    }
+    m_vfingerDown = false;
+    m_vfingerInvertX = false;
+    m_vfingerInvertY = false;
+    m_vfingerLastPos = QPoint(kRemoteCursorHideCoord, kRemoteCursorHideCoord);
+    m_vfingerLastFrameSize = QSize();
     clearPendingRemoteCursorState();
     clearPendingNormalTapRelease();
     m_activeNormalTouchPos = QPoint(kRemoteCursorHideCoord, kRemoteCursorHideCoord);

@@ -39,6 +39,7 @@ struct UserBootConfig
     bool autoUpdateDevice = true;
     int autoUpdateIntervalSec = 5;
     bool showToolbar      = true;
+    bool quitOnClose      = false;
 };
 
 struct DeviceMouseConfig

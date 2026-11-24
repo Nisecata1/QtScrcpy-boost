@@ -126,6 +126,8 @@
 
 #define COMMON_SHOW_TOOLBAR_KEY "showToolbar"
 #define COMMON_SHOW_TOOLBAR_DEF true
+#define COMMON_QUIT_ON_CLOSE_KEY "QuitOnClose"
+#define COMMON_QUIT_ON_CLOSE_DEF false
 
 // device config
 #define SERIAL_WINDOW_RECT_KEY_X "WindowRectX"
@@ -359,6 +361,7 @@ void Config::setUserBootConfig(const UserBootConfig &config)
     m_userData->setValue(COMMON_AUTO_UPDATE_DEVICE_KEY, config.autoUpdateDevice);
     m_userData->setValue(COMMON_AUTO_UPDATE_INTERVAL_SEC_KEY, qBound(1, config.autoUpdateIntervalSec, 3600));
     m_userData->setValue(COMMON_SHOW_TOOLBAR_KEY, config.showToolbar);
+    m_userData->setValue(COMMON_QUIT_ON_CLOSE_KEY, config.quitOnClose);
     m_userData->endGroup();
     m_userData->sync();
 }
@@ -394,6 +397,7 @@ UserBootConfig Config::getUserBootConfig()
         config.autoUpdateIntervalSec = qBound(1, intervalOk ? intervalSec : COMMON_AUTO_UPDATE_INTERVAL_SEC_DEF, 3600);
     }
     config.showToolbar =m_userData->value(COMMON_SHOW_TOOLBAR_KEY,COMMON_SHOW_TOOLBAR_DEF).toBool();
+    config.quitOnClose = m_userData->value(COMMON_QUIT_ON_CLOSE_KEY, COMMON_QUIT_ON_CLOSE_DEF).toBool();
     m_userData->endGroup();
     config.maxFps = getGlobalMaxFps();
     return config;

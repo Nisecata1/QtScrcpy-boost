@@ -496,12 +496,24 @@ void Device::initSignals()
                         return;
                     }
 
+                    if (!m_server) {
+                        return;
+                    }
                     auto controlSocket = m_server->getControlSocket();
+                    if (!controlSocket) {
+                        return;
+                    }
                     while (controlSocket->bytesAvailable()) {
                         QByteArray byteArray = controlSocket->peek(controlSocket->bytesAvailable());
                         DeviceMsg deviceMsg;
                         qint32 consume = deviceMsg.deserialize(byteArray);
-                        if (0 >= consume) {
+                        if (consume == 0) {
+                            // Incomplete device message: wait for the next readyRead.
+                            break;
+                        }
+                        if (consume < 0) {
+                            qCritical("Unsupported device message; closing control socket");
+                            controlSocket->disconnectFromHost();
                             break;
                         }
                         controlSocket->read(consume);

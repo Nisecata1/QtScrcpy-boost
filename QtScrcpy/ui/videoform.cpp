@@ -306,6 +306,16 @@ VideoForm::VideoForm(bool framelessWindow, bool skin, bool showToolbar, QWidget 
         applyTheme();
     });
     applyTheme();
+
+    connect(qApp, &QGuiApplication::screenAdded, this, [this]() {
+        QTimer::singleShot(300, this, [this]() { ensureOnScreen(); });
+        QTimer::singleShot(1000, this, [this]() { ensureOnScreen(); });
+    });
+    connect(qApp, &QGuiApplication::screenRemoved, this, [this]() {
+        QTimer::singleShot(300, this, [this]() { ensureOnScreen(); });
+        QTimer::singleShot(1000, this, [this]() { ensureOnScreen(); });
+        QTimer::singleShot(2000, this, [this]() { ensureOnScreen(); });
+    });
 }
 
 VideoForm::~VideoForm()
@@ -1284,6 +1294,49 @@ QRect VideoForm::getScreenRect()
         screenRect = screen->availableGeometry();
     }
     return screenRect;
+}
+
+bool VideoForm::isRectOnAnyScreen(const QRect &rect) const
+{
+    const QList<QScreen *> screens = QGuiApplication::screens();
+    for (QScreen *screen : screens) {
+        if (!screen) {
+            continue;
+        }
+        if (screen->availableGeometry().intersects(rect)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void VideoForm::ensureOnScreen()
+{
+    if (isFullScreen()) {
+        return;
+    }
+
+    const QRect curRect = frameGeometry();
+    if (isRectOnAnyScreen(curRect)) {
+        return;
+    }
+
+    qWarning() << "window is off-screen, moving back to primary screen. rect =" << curRect;
+
+    QScreen *primary = QGuiApplication::primaryScreen();
+    if (!primary) {
+        qWarning() << "no primary screen available, skip off-screen recovery";
+        return;
+    }
+
+    const QRect avail = primary->availableGeometry();
+    if (avail.isEmpty()) {
+        return;
+    }
+
+    const QPoint target = avail.center() - QRect(0, 0, size().width(), size().height()).center();
+    move(target);
+    qWarning() << "window recovered to" << target;
 }
 
 void VideoForm::updateStyleSheet(bool vertical)
@@ -2653,6 +2706,8 @@ void VideoForm::paintEvent(QPaintEvent *paint)
 void VideoForm::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
+    ensureOnScreen();
+    QTimer::singleShot(300, this, [this]() { ensureOnScreen(); });
     applyTheme();
     ui->keepRatioWidget->relayoutNow();
     applyVideoCanvasLayout();

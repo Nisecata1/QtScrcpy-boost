@@ -130,7 +130,10 @@ private:
     void showToolForm(bool show = true);
     void moveCenter();
     void installShortcut();
+    void installShortcut();
     QRect getScreenRect();
+    void ensureOnScreen();
+    bool isRectOnAnyScreen(const QRect &rect) const;
 
 protected:
     void mousePressEvent(QMouseEvent *event) override;

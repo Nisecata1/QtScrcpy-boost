@@ -74,6 +74,8 @@ private:
     AndroidMotioneventButtons convertMouseButton(Qt::MouseButton button);
     AndroidKeycode convertKeyCode(int key, Qt::KeyboardModifiers modifiers);
     AndroidMetastate convertMetastate(Qt::KeyboardModifiers modifiers);
+    void sendVirtualFingerEvent(AndroidMotioneventAction action, const QPoint &pos, const QSize &frameSize,
+                                bool immediate = false);
 
 private:
     bool m_remoteCursorEnabled = false;
@@ -124,6 +126,11 @@ private:
     qint64 m_leftPressStartMs = 0;
     bool m_leftTapCandidate = false;
     bool m_pendingRemoteCursorSendMouseHover = false;
+    bool m_vfingerDown = false;
+    bool m_vfingerInvertX = false;
+    bool m_vfingerInvertY = false;
+    QPoint m_vfingerLastPos = QPoint(-1, -1);
+    QSize m_vfingerLastFrameSize;
 };
 
 #endif // INPUTCONVERT_H
